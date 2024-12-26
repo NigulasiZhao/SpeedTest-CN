@@ -1,9 +1,11 @@
 using Hangfire;
 using Hangfire.PostgreSql;
+using Microsoft.AspNetCore.Localization;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
 using SpeedTest_CN;
 using System.Data;
+using System.Globalization;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,10 +23,6 @@ builder.Services.AddCors(options =>
               .AllowAnyHeader(); // 允许任何请求头
     });
 });
-builder.Services.AddSingleton<IDbConnection>(sp =>
-{
-    return new NpgsqlConnection(builder.Configuration["Connection"]); // 替换为 NpgsqlConnection 或其他适配器
-});
 builder.Services.AddHangfire(config =>
 config.UsePostgreSqlStorage(c =>
         c.UseNpgsqlConnection(builder.Configuration["Connection"].ToString())));
@@ -32,6 +30,22 @@ builder.Services.AddHangfireServer();
 builder.Services.AddSingleton<HangFireHelper>();
 builder.Services.AddSingleton<DatabaseInitializer>();
 var app = builder.Build();
+var zh = new CultureInfo("zh-CN");
+zh.DateTimeFormat.FullDateTimePattern = "yyyy-MM-dd HH:mm:ss";
+zh.DateTimeFormat.LongDatePattern = "yyyy-MM-dd";
+zh.DateTimeFormat.LongTimePattern = "HH:mm:ss";
+zh.DateTimeFormat.ShortDatePattern = "yyyy-MM-dd";
+zh.DateTimeFormat.ShortTimePattern = "HH:mm:ss";
+IList<CultureInfo> supportedCultures = new List<CultureInfo>
+            {
+                zh,
+            };
+app.UseRequestLocalization(new RequestLocalizationOptions
+{
+    DefaultRequestCulture = new RequestCulture("zh-CN"),
+    SupportedCultures = supportedCultures,
+    SupportedUICultures = supportedCultures
+});
 using (var scope = app.Services.CreateScope())
 {
     var initializer = scope.ServiceProvider.GetRequiredService<DatabaseInitializer>();

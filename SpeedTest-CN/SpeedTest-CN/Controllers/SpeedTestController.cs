@@ -1,5 +1,6 @@
 ﻿using Dapper;
 using Microsoft.AspNetCore.Mvc;
+using Npgsql;
 using SpeedTest_CN.Models;
 using SpeedTest_CN.SpeedTest;
 using System.Data;
@@ -11,10 +12,10 @@ namespace SpeedTest_CN.Controllers
     [Route("api/[controller]/[action]")]
     public class SpeedTestController : Controller
     {
-        private readonly IDbConnection _DbConnection;
-        public SpeedTestController(IDbConnection DbConnection)
+        private readonly IConfiguration _Configuration;
+        public SpeedTestController(IConfiguration configuration)
         {
-            _DbConnection = DbConnection;
+            _Configuration = configuration;
         }
         [HttpGet]
         public string Index()
@@ -26,7 +27,9 @@ namespace SpeedTest_CN.Controllers
         [HttpGet]
         public ActionResult latest()
         {
+            IDbConnection _DbConnection = new NpgsqlConnection(_Configuration["Connection"]);
             SpeedRecord speedRecord = _DbConnection.Query<SpeedRecord>("select * from speedrecord order by created_at desc").First();
+            _DbConnection.Dispose();
             SpeedRecordResponse speedRecordResponse = new SpeedRecordResponse();
             speedRecordResponse.Message = "ok";
             speedRecordResponse.Data = speedRecord;

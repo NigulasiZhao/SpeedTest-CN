@@ -1,7 +1,9 @@
 ﻿using Dapper;
 using Hangfire;
+using Newtonsoft.Json;
 using Npgsql;
 using SpeedTest_CN.Models;
+using SpeedTest_CN.Models.Attendance;
 using System;
 using System.Data;
 using System.Data.Common;
@@ -11,11 +13,9 @@ namespace SpeedTest_CN
 {
     public class HangFireHelper
     {
-        private readonly IDbConnection _DbConnection;
         private readonly IConfiguration _Configuration;
-        public HangFireHelper(IDbConnection DbConnection, IConfiguration configuration)
+        public HangFireHelper(IConfiguration configuration)
         {
-            _DbConnection = DbConnection;
             _Configuration = configuration;
         }
         public void StartHangFireTask()
@@ -24,14 +24,13 @@ namespace SpeedTest_CN
             //每小时0 0 * * * ?
             //每五分钟0 0/5 * * * ?
             RecurringJob.AddOrUpdate("SpeedTest", () => SpeedTest(), "0 0 */1 * * ?", new RecurringJobOptions() { TimeZone = TimeZoneInfo.Local, });
+            RecurringJob.AddOrUpdate("AttendanceRecord", () => AttendanceRecord(), "0 20 7 * * ?", new RecurringJobOptions() { TimeZone = TimeZoneInfo.Local, });
         }
         public void SpeedTest()
         {
-            //int TodayRecord = _DbConnection.Query<int>($"select count(0) from speedrecord where to_char(created_at,'yyyy-mm-dd') = '{DateTime.Now.ToString("yyyy-MM-dd")}' ").FirstOrDefault();
-            //if (TodayRecord == 0)
-            //{
             try
             {
+                IDbConnection _DbConnection = new NpgsqlConnection(_Configuration["Connection"]);
                 SpeedTestHelper speedTestHelper = new SpeedTestHelper();
                 Server speedResult = speedTestHelper.StartSpeedTest();
                 _DbConnection.Execute($@"INSERT INTO speedrecord
@@ -59,6 +58,7 @@ namespace SpeedTest_CN
                 {
                     PushMessage(speedResult);
                 }
+                _DbConnection.Dispose();
             }
             catch (Exception)
             {
@@ -100,6 +100,42 @@ namespace SpeedTest_CN
                     }
                 }
             }
+        }
+
+        public void AttendanceRecord()
+        {
+            IDbConnection _DbConnection = new NpgsqlConnection(_Configuration["Connection"]);
+            HttpClient client = new HttpClient();
+            client.DefaultRequestHeaders.Add("Authorization", _Configuration["yinuotoken"]);
+            DateTime StartDate = DateTime.Now.AddDays(-1);
+            var response = client.GetAsync("http://122.225.71.14:10001/hd-oa/api/oaUserClockInRecord/clockInDataMonth?yearMonth=" + StartDate.ToString("yyyy-MM")).Result;
+            string result = response.Content.ReadAsStringAsync().Result;
+            AttendanceResponse ResultModel = JsonConvert.DeserializeObject<AttendanceResponse>(result);
+            if (ResultModel.Code == 200)
+            {
+                _DbConnection.Execute($@"delete from public.attendancerecord where attendancemonth = '{StartDate.ToString("yyyy-MM")}'");
+                _DbConnection.Execute($@"delete from public.attendancerecordday where to_char(attendancedate,'yyyy-mm') = '{StartDate.ToString("yyyy-MM")}'");
+                _DbConnection.Execute($@"delete from public.attendancerecorddaydetail where to_char(attendancedate,'yyyy-mm') = '{StartDate.ToString("yyyy-MM")}'");
+                _DbConnection.Execute($"INSERT INTO public.attendancerecord(attendancemonth,workdays,latedays,earlydays) VALUES('{StartDate.ToString("yyyy-MM")}',{ResultModel.Data.WorkDays},{ResultModel.Data.LateDays},{ResultModel.Data.EarlyDays});");
+                foreach (var item in ResultModel.Data.DayVoList)
+                {
+                    DateTime flagedate = DateTime.Parse(StartDate.ToString("yyyy-MM") + "-" + item.Day);
+                    if (item.WorkHours != null)
+                    {
+                        _DbConnection.Execute($@"INSERT INTO public.attendancerecordday(untilthisday,day,checkinrule,isnormal,isabnormal,isapply,clockinnumber,workhours,attendancedate)
+                                                        VALUES({item.UntilThisDay},{item.Day},'{item.CheckInRule}','{item.IsNormal}','{item.IsAbnormal}','{item.IsApply}',{item.ClockInNumber},{item.WorkHours},to_timestamp('{flagedate.ToString("yyyy-MM-dd 00:00:00")}', 'yyyy-mm-dd hh24:mi:ss'));");
+                        if (item.DetailList != null)
+                        {
+                            foreach (var daydetail in item.DetailList)
+                            {
+                                _DbConnection.Execute($@"INSERT INTO public.attendancerecorddaydetail(id,recordid,clockintype,clockintime,attendancedate)
+                                                        VALUES({daydetail.Id},{daydetail.RecordId},'{daydetail.ClockInType}',to_timestamp('{daydetail.ClockInTime}', 'yyyy-mm-dd hh24:mi:ss'),to_timestamp('{flagedate.ToString("yyyy-MM-dd 00:00:00")}', 'yyyy-mm-dd hh24:mi:ss'));");
+                            }
+                        }
+                    }
+                }
+            }
+            _DbConnection.Dispose();
         }
     }
 }
