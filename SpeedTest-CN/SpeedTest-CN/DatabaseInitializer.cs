@@ -5,13 +5,15 @@ using SpeedTest_CN.Models.Attendance;
 using System.Data;
 using System.Data.Common;
 using Npgsql;
+using LibGit2Sharp;
+using System.IO;
 
 namespace SpeedTest_CN
 {
     public class DatabaseInitializer
     {
         private readonly IConfiguration _Configuration;
-        public DatabaseInitializer( IConfiguration configuration)
+        public DatabaseInitializer(IConfiguration configuration)
         {
             _Configuration = configuration;
         }
@@ -19,7 +21,6 @@ namespace SpeedTest_CN
         public void Initialize()
         {
             IDbConnection _dbConnection = new NpgsqlConnection(_Configuration["Connection"]);
-            string tableName = "speedrecord";
             if (TableExists("speedrecord", _dbConnection))
             {
                 string createTableSql = @"
@@ -102,7 +103,7 @@ namespace SpeedTest_CN
                         foreach (var item in ResultModel.Data.DayVoList)
                         {
                             DateTime flagedate = DateTime.Parse(StartDate.ToString("yyyy-MM") + "-" + item.Day);
-                            if (item.WorkHours!=null)
+                            if (item.WorkHours != null)
                             {
                                 _dbConnection.Execute($@"INSERT INTO public.attendancerecordday(untilthisday,day,checkinrule,isnormal,isabnormal,isapply,clockinnumber,workhours,attendancedate)
                                                         VALUES({item.UntilThisDay},{item.Day},'{item.CheckInRule}','{item.IsNormal}','{item.IsAbnormal}','{item.IsApply}',{item.ClockInNumber},{item.WorkHours},to_timestamp('{flagedate.ToString("yyyy-MM-dd 00:00:00")}', 'yyyy-mm-dd hh24:mi:ss'));");
@@ -124,6 +125,42 @@ namespace SpeedTest_CN
                     StartDate = StartDate.AddMonths(1);
                 }
 
+            }
+            if (TableExists("gogsrecord", _dbConnection))
+            {
+                string dataSql = "";
+                string createTableSql = @"
+                                   CREATE TABLE public.gogsrecord (
+                                                	id varchar(100) NULL,
+                                                	repositoryname varchar(200) NULL,
+                                                	branchname varchar(200) NULL,
+                                                	commitsdate timestamp NULL
+                                                );
+                                                ";
+                string[] directories = Directory.GetDirectories(AppDomain.CurrentDomain.BaseDirectory + "ProjectGit");
+                string targetEmail = _Configuration["GogsEmail"];
+                var allCommits = new Dictionary<string, List<Commit>>();
+                foreach (var repoPath in directories)
+                {
+                    string folderName = Path.GetFileName(repoPath);
+                    if (Directory.Exists(repoPath + "/.git"))
+                    {
+                        using (var repo = new Repository(repoPath))
+                        {
+                            foreach (var branch in repo.Branches)
+                            {
+                                allCommits.Add(repoPath + branch.FriendlyName, branch.Commits.Where(commit => commit.Author.Email == targetEmail).ToList());
+                            }
+                        }
+                    }
+                }
+                var uniqueCommits = new HashSet<Commit>(allCommits.SelectMany(kvp => kvp.Value));
+                foreach (var commit in uniqueCommits)
+                {
+                    dataSql += @$"INSERT INTO public.gogsrecord(id,commitsdate) VALUES('{commit.Id}',to_timestamp('{commit.Committer.When.ToString("yyyy-MM-dd HH:MM:ss")}', 'yyyy-mm-dd hh24:mi:ss'));";
+                }
+                _dbConnection.Execute(createTableSql);
+                _dbConnection.Execute(dataSql);
             }
             _dbConnection.Dispose();
         }
