@@ -152,7 +152,7 @@ namespace SpeedTest_CN
                             {
                                 foreach (var branch in repo.Branches)
                                 {
-                                    allCommits.Add(repoPath + branch.FriendlyName, branch.Commits.Where(commit => commit.Author.Name == "Criska").ToList());
+                                    allCommits.Add(repoPath + branch.FriendlyName, branch.Commits.Where(commit => commit.Author.Email == targetEmail).ToList());
                                 }
                             }
                         }
