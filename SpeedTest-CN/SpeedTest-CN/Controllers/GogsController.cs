@@ -89,7 +89,10 @@ namespace SpeedTest_CN.Controllers
                                 dataSql += @$"INSERT INTO public.gogsrecord(id,commitsdate) VALUES('{item.Id}',to_timestamp('{item.Timestamp.ToString("yyyy-MM-dd HH:MM:ss")}', 'yyyy-mm-dd hh24:mi:ss'));";
                             }
                         }
-                        _DbConnection.Execute(dataSql);
+                        if (!string.IsNullOrEmpty(dataSql))
+                        {
+                            _DbConnection.Execute(dataSql);
+                        }
                         _DbConnection.Dispose();
                     }
                 }
