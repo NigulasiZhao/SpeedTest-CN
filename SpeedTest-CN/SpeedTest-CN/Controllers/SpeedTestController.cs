@@ -36,5 +36,27 @@ namespace SpeedTest_CN.Controllers
             // 返回结果
             return Json(speedRecordResponse);
         }
+        [HttpGet]
+        public ActionResult test()
+        {
+            // 返回结果
+            return Json(new
+            {
+                id = 1,
+                name = "Rick Sanchez",
+                status = "Alive",
+                species = "Human",
+                gender = "Male",
+                origin = new
+                {
+                    name = "Earth (C-137)"
+                },
+                locations = new[]
+            {
+                new { name = "Earth (C-137)" },
+                new { name = "Citadel of Ricks" }
+            }
+            });
+        }
     }
 }
