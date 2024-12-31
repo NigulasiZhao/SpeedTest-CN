@@ -104,5 +104,41 @@ namespace SpeedTest_CN.Controllers
             }
             return Json("成功");
         }
+        [HttpPost]
+        public ActionResult GitHubPush([FromBody] GitHubWebhookPayload input)
+        {
+            IDbConnection _DbConnection = new NpgsqlConnection(_Configuration["Connection"]);
+            string BranchName = input.@ref.Split("/").Last();
+            string dataSql = "";
+            try
+            {
+                if (input.commits != null)
+                {
+                    if (input.commits.Count > 0)
+                    {
+                        List<Models.Gogs.Commit> WebhookCommitList = input.commits.Where(e => e.committer.Email == _Configuration["GogsEmail"]).ToList();
+                        foreach (var item in WebhookCommitList)
+                        {
+                            int CommitExists = _DbConnection.Query<int>("select count(0) from public.gogsrecord where id = :id", new { id = item.id }).First();
+                            if (CommitExists == 0)
+                            {
+                                dataSql += @$"INSERT INTO public.gogsrecord(id,commitsdate) VALUES('{item.id}',to_timestamp('{item.timestamp.ToString("yyyy-MM-dd HH:MM:ss")}', 'yyyy-mm-dd hh24:mi:ss'));";
+                            }
+                        }
+                        if (!string.IsNullOrEmpty(dataSql))
+                        {
+                            _DbConnection.Execute(dataSql);
+                        }
+                        _DbConnection.Dispose();
+                    }
+                }
+            }
+            catch (IOException e)
+            {
+                _DbConnection.Dispose();
+                return Json(e.Message);
+            }
+            return Json("成功");
+        }
     }
 }
