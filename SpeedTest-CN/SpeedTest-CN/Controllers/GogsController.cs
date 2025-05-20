@@ -3,6 +3,7 @@ using LibGit2Sharp;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using Npgsql;
+using SpeedTest_CN.Models.Attendance;
 using SpeedTest_CN.Models.Gogs;
 using System.Data;
 using System.Data.Common;
@@ -68,6 +69,34 @@ namespace SpeedTest_CN.Controllers
                 DayAvg = Math.Round((double)uniqueCommits / (double)commitDates, 2)
             });
         }
+        [HttpGet]
+        public ActionResult calendar(string start = "", string end = "")
+        {
+            IDbConnection _DbConnection = new NpgsqlConnection(_Configuration["Connection"]);
+            string sqlwhere = " where 1=1 ";
+            if (!string.IsNullOrEmpty(start))
+            {
+                sqlwhere += $" and a.commitsdate >= '{DateTime.Parse(start)}'";
+            }
+            if (!string.IsNullOrEmpty(end))
+            {
+                sqlwhere += $" and a.commitsdate <= '{DateTime.Parse(end).AddDays(1).AddSeconds(-1)}'";
+            }
+            List<GogsCalendar> WorkList = _DbConnection.Query<GogsCalendar>(@"select
+                                                                                                        		a.id as rownum,
+	'commit '||case when repositoryname is null then '' else '仓库:'||repositoryname end || case when branchname is null then '' else ';分支:'||SPLIT_PART(branchname, '/', 
+                 LENGTH(branchname) - LENGTH(REPLACE(branchname, '/', '')) + 1) end as title,
+	to_char(timezone('UTC',
+	a.commitsdate at TIME zone 'Asia/Shanghai'),
+	'yyyy-mm-ddThh24:mi:ssZ') as airDateUtc,
+	true as hasFile,
+	coalesce(message,'') as message
+                                                                                                        from
+                                                                                                        	public.gogsrecord a
+                                                                                                    " + sqlwhere + " order by commitsdate asc").ToList();
+            _DbConnection.Dispose();
+            return Json(WorkList);
+        }
         [HttpPost]
         public ActionResult GogsPush([FromBody] WebhookPayload input)
         {
@@ -86,12 +115,9 @@ namespace SpeedTest_CN.Controllers
                             int CommitExists = _DbConnection.Query<int>("select count(0) from public.gogsrecord where id = :id", new { id = item.Id }).First();
                             if (CommitExists == 0)
                             {
-                                dataSql += @$"INSERT INTO public.gogsrecord(id,commitsdate) VALUES('{item.Id}',to_timestamp('{item.Timestamp.ToString("yyyy-MM-dd HH:MM:ss")}', 'yyyy-mm-dd hh24:mi:ss'));";
+                                _DbConnection.Execute($@"INSERT INTO public.gogsrecord(id,repositoryname,branchname,commitsdate,message) VALUES(:id,:repositoryname,:branchname,to_timestamp('{item.Timestamp.ToString("yyyy-MM-dd HH:MM:ss")}', 'yyyy-mm-dd hh24:mi:ss'),:message);"
+                                    , new { id = item.Id, repositoryname = input.Repository.Name, branchname = input.Ref, message = item.Message });
                             }
-                        }
-                        if (!string.IsNullOrEmpty(dataSql))
-                        {
-                            _DbConnection.Execute(dataSql);
                         }
                         _DbConnection.Dispose();
                     }
@@ -122,7 +148,8 @@ namespace SpeedTest_CN.Controllers
                             int CommitExists = _DbConnection.Query<int>("select count(0) from public.gogsrecord where id = :id", new { id = item.id }).First();
                             if (CommitExists == 0)
                             {
-                                dataSql += @$"INSERT INTO public.gogsrecord(id,commitsdate) VALUES('{item.id}',to_timestamp('{item.timestamp.ToString("yyyy-MM-dd HH:MM:ss")}', 'yyyy-mm-dd hh24:mi:ss'));";
+                                _DbConnection.Execute(@$"INSERT INTO public.gogsrecord(id,repositoryname,branchname,commitsdate,message) VALUES(:id,:repositoryname,:branchname,to_timestamp('{item.timestamp.ToString("yyyy-MM-dd HH:MM:ss")}', 'yyyy-mm-dd hh24:mi:ss'),:message);"
+                                    , new { id = item.id, repositoryname = input.repository.name, branchname = input.@ref, message = item.message });
                             }
                         }
                         if (!string.IsNullOrEmpty(dataSql))

@@ -24,7 +24,7 @@ namespace SpeedTest_CN
             //每小时0 0 * * * ?
             //每五分钟0 0/5 * * * ?
             RecurringJob.AddOrUpdate("SpeedTest", () => SpeedTest(), "0 0 */1 * * ?", new RecurringJobOptions() { TimeZone = TimeZoneInfo.Local, });
-            RecurringJob.AddOrUpdate("AttendanceRecord", () => AttendanceRecord(), "0 20 7 * * ?", new RecurringJobOptions() { TimeZone = TimeZoneInfo.Local, });
+            RecurringJob.AddOrUpdate("AttendanceRecord", () => AttendanceRecord(), "0 0 */3 * * ?", new RecurringJobOptions() { TimeZone = TimeZoneInfo.Local, });
         }
         public void SpeedTest()
         {
