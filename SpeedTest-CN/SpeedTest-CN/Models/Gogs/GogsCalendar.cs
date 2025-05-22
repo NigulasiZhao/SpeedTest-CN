@@ -7,5 +7,7 @@
         public string airDateUtc { get; set; }
         public bool hasFile { get; set; }
         public string message { get; set; }
+
+        public string color { get; set; }
     }
 }

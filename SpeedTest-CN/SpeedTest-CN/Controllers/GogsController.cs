@@ -73,28 +73,104 @@ namespace SpeedTest_CN.Controllers
         public ActionResult calendar(string start = "", string end = "")
         {
             IDbConnection _DbConnection = new NpgsqlConnection(_Configuration["Connection"]);
-            string sqlwhere = " where 1=1 ";
+            string sqlwhere = " where 1=1 ", sqlwhere1 = " where 1=1 ";
             if (!string.IsNullOrEmpty(start))
             {
                 sqlwhere += $" and a.commitsdate >= '{DateTime.Parse(start)}'";
+                sqlwhere1 += $" and a.clockintime >= '{DateTime.Parse(start)}'";
             }
             if (!string.IsNullOrEmpty(end))
             {
                 sqlwhere += $" and a.commitsdate <= '{DateTime.Parse(end).AddDays(1).AddSeconds(-1)}'";
+                sqlwhere1 += $" and a.clockintime <= '{DateTime.Parse(end).AddDays(1).AddSeconds(-1)}'";
+
             }
-            List<GogsCalendar> WorkList = _DbConnection.Query<GogsCalendar>(@"select
-                                                                                                        		a.id as rownum,
-	'commit '||case when repositoryname is null then '' else '仓库:'||repositoryname end || case when branchname is null then '' else ';分支:'||SPLIT_PART(branchname, '/', 
-                 LENGTH(branchname) - LENGTH(REPLACE(branchname, '/', '')) + 1) end as title,
-	to_char(timezone('UTC',
-	a.commitsdate at TIME zone 'Asia/Shanghai'),
-	'yyyy-mm-ddThh24:mi:ssZ') as airDateUtc,
-	true as hasFile,
-	coalesce(message,'') as message
-                                                                                                        from
-                                                                                                        	public.gogsrecord a
-                                                                                                    " + sqlwhere + " order by commitsdate asc").ToList();
+            List<GogsCalendar> WorkList = _DbConnection.Query<GogsCalendar>(@"select * from (select
+                                                                                                	a.id as rownum,
+                                                                                                	case
+                                                                                                		when message like '%Merge branch%' then '合并 '
+                                                                                                		else '变更 '
+                                                                                                	end || case
+                                                                                                		when repositoryname is null then ''
+                                                                                                		else '仓库:' || repositoryname
+                                                                                                	end || case
+                                                                                                		when branchname is null then ''
+                                                                                                		else ';分支:' || SPLIT_PART(branchname,
+                                                                                                		'/',
+                                                                                                		LENGTH(branchname) - LENGTH(replace(branchname,
+                                                                                                		'/',
+                                                                                                		'')) + 1)
+                                                                                                	end as title,
+                                                                                                	to_char(timezone('UTC',
+                                                                                                	a.commitsdate at TIME zone 'Asia/Shanghai'),
+                                                                                                	'yyyy-mm-ddThh24:mi:ssZ') as airDateUtc,
+                                                                                                	true as hasFile,
+                                                                                                	coalesce(message,
+                                                                                                	'') as message,
+                                                                                                	'sky' as color
+                                                                                                from
+                                                                                                	public.gogsrecord a " + sqlwhere + @"
+                                                                                                union all
+                                                                                                select
+                                                                                                	cast(a.id  as VARCHAR) as rownum,
+                                                                                                	case
+                                                                                                		a.clockintype when '0' then '上班打卡'
+                                                                                                		else '下班打卡'
+                                                                                                	end as title,
+                                                                                                	to_char(timezone('UTC',
+                                                                                                	a.clockintime at TIME zone 'Asia/Shanghai'),
+                                                                                                	'yyyy-mm-ddThh24:mi:ssZ') as airDateUtc,
+                                                                                                	true as hasFile,
+                                                                                                	case
+                                                                                                		when b.workhours = 0 then '当日工时: ' || RTRIM(RTRIM(cast(ROUND(extract(EPOCH
+                                                                                                	from
+                                                                                                		(now() at TIME zone 'Asia/Shanghai' - a.clockintime))/ 3600,
+                                                                                                		1) as VARCHAR),
+                                                                                                		'0'),
+                                                                                                		'.')|| ' 小时'
+                                                                                                		else '当日工时: ' || RTRIM(RTRIM(cast(b.workhours as VARCHAR),
+                                                                                                		'0'),
+                                                                                                		'.') || ' 小时'
+                                                                                                	end as message,
+                                                                                                	'emerald' as color
+                                                                                                from
+                                                                                                	public.attendancerecorddaydetail a
+                                                                                                left join attendancerecordday b on
+                                                                                                	to_char(a.attendancedate,
+                                                                                                	'yyyy-mm-dd') = to_char(b.attendancedate,
+                                                                                                	'yyyy-mm-dd') " + sqlwhere1 +
+                                                                                                    @"union all
+                                                                                                    	select
+                                                                                                    		id,
+                                                                                                    		title,
+                                                                                                    		to_char(timezone('UTC',
+                                                                                                    		a.clockintime at TIME zone 'Asia/Shanghai'),
+                                                                                                    		'yyyy-mm-ddThh24:mi:ssZ') as airDateUtc,
+                                                                                                    		true as hasFile,
+                                                                                                    		message,
+                                                                                                    		color
+                                                                                                    	from
+                                                                                                    		eventinfo a	" + sqlwhere1 +
+                                                                                                    @") order by airDateUtc desc").ToList();
             _DbConnection.Dispose();
+            //WorkList[0].color = "violet";
+            //WorkList[1].color = "white";
+            //WorkList[2].color = "yellow";
+            //WorkList[3].color = "zinc";
+            //WorkList[4].color = "fuchsia";
+            //WorkList[5].color = "gray";
+            //WorkList[6].color = "green";
+            //WorkList[7].color = "indigo";
+            //WorkList[8].color = "lime";
+            //WorkList[9].color = "neutral";
+            //WorkList[10].color = "orange";
+            //WorkList[11].color = "pink";
+            //WorkList[12].color = "purple";
+            //WorkList[13].color = "red";
+            //WorkList[14].color = "rose";
+            //WorkList[15].color = "slate";
+            //WorkList[16].color = "stone";
+            //WorkList[17].color = "teal";
             return Json(WorkList);
         }
         [HttpPost]
