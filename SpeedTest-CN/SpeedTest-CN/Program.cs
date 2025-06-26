@@ -18,9 +18,9 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
     {
-        policy.AllowAnyOrigin()  // ÔÊÐíÀ´×ÔÈÎºÎÔ´µÄÇëÇó
-              .AllowAnyMethod()  // ÔÊÐíÈÎºÎ HTTP ·½·¨£¨GET¡¢POST¡¢PUT¡¢DELETE µÈ£©
-              .AllowAnyHeader(); // ÔÊÐíÈÎºÎÇëÇóÍ·
+        policy.AllowAnyOrigin()  // å…è®¸æ¥è‡ªä»»ä½•æºçš„è¯·æ±‚
+              .AllowAnyMethod()  // å…è®¸ä»»ä½• HTTP æ–¹æ³•ï¼ˆGETã€POSTã€PUTã€DELETE ç­‰ï¼‰
+              .AllowAnyHeader(); // å…è®¸ä»»ä½•è¯·æ±‚å¤´
     });
 });
 builder.Services.AddHangfire(config =>

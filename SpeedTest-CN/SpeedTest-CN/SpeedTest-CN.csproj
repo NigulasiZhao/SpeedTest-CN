@@ -24,4 +24,10 @@
     <Folder Include="ProjectGit\" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Update="AddressBook.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

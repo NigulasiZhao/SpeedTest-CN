@@ -60,7 +60,7 @@ version=""1.0"" encoding=""UTF-8""?>
 version=""1.0"" encoding=""UTF-8""?>
 <settings>
 <servers>
-<server url=""http://5g.shunicomtest.com:8080/speedtest/upload.php"" lat=""31.2000"" lon=""121.5000"" name=""Shanghai"" country=""China"" cc=""CN"" sponsor=""China Unicom 5G"" id=""24447"" host=""5g.shunicomtest.com.prod.hosts.ooklaserver.net:8080""/>
+<server url=""http://cuscspeed.169ol.com:8080/speedtest/upload.php"" lat=""30.6586"" lon=""104.0647"" name=""Chengdu"" country=""China"" cc=""CN"" sponsor=""ChinaUnicom Sichuan"" id=""64314"" host=""cuscspeed.169ol.com:8080""/>
 </servers>
 </settings>";//await GetStringAsync(AddTimeStamp(new Uri(url)));
             var xmlSerializer = new XmlSerializer(typeof(T));
