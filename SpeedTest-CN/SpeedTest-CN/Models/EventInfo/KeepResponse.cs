@@ -25,7 +25,7 @@
     public class DailyList
     {
         public string type { get; set; }
-        public LogStats stats { get; set; }
+        public LogStats? stats { get; set; }
     }
     public class LogStats
     {

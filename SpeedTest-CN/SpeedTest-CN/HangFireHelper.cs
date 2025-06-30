@@ -6,6 +6,7 @@ using SpeedTest_CN.Models;
 using SpeedTest_CN.Models.Attendance;
 using SpeedTest_CN.Models.EventInfo;
 using System.Data;
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
 using Microsoft.Extensions.Caching.Memory;
@@ -25,7 +26,7 @@ public class HangFireHelper(IConfiguration configuration)
         RecurringJob.AddOrUpdate("CheckInWarning", () => CheckInWarning(), "0 0/10 * * * ?", new RecurringJobOptions { TimeZone = TimeZoneInfo.Local });
     }
 
-    private static readonly MemoryCache _cache = new(new MemoryCacheOptions());
+    private static readonly MemoryCache Cache = new(new MemoryCacheOptions());
 
     public void SpeedTest()
     {
@@ -76,11 +77,12 @@ public class HangFireHelper(IConfiguration configuration)
         // 创建 MultipartFormDataContent
         using var formData = new MultipartFormDataContent();
         // 添加表单字段
-        formData.Add(new StringContent(configuration["PushMessageTitle"]!.ToString()), "title");
+        formData.Add(new StringContent(configuration["PushMessageTitle"]!), "title");
         formData.Add(
-            new StringContent(configuration["PushMessageContent"]!.ToString().Replace("downloadSpeed", speedResult.downloadSpeed.ToString()).Replace("uploadSpeed", speedResult.uploadSpeed.ToString())
+            new StringContent(configuration["PushMessageContent"]!.Replace("downloadSpeed", speedResult.downloadSpeed.ToString(CultureInfo.InvariantCulture))
+                .Replace("uploadSpeed", speedResult.uploadSpeed.ToString(CultureInfo.InvariantCulture))
                 .Replace("Latency", speedResult.Latency.ToString())), "message");
-        formData.Add(new StringContent(configuration["PushMessagePriority"]!.ToString()), "priority");
+        formData.Add(new StringContent(configuration["PushMessagePriority"]!), "priority");
 
         try
         {
@@ -252,92 +254,95 @@ public class HangFireHelper(IConfiguration configuration)
         var pushMessage = "";
         const string fakeSignature = "Gj0IbFZe_rpj5mtMfwoHVo2luGHlmaJa7MtbxwfNSaI";
         var listOfPersonnel = configuration.GetSection("ListOfPersonnel").Get<List<ListOfPersonnel>>();
-        var realNameList = listOfPersonnel.Select(e => e.RealName).ToList();
-        using var sr = new StreamReader(AppDomain.CurrentDomain.BaseDirectory + "AddressBook.json");
-        var content = sr.ReadToEnd();
-        var addressBookList = JsonConvert.DeserializeObject<List<AddressBookInfo>>(content);
-
-        addressBookList = addressBookList?.Where(e => realNameList.Contains(e.Name)).ToList();
-        if (addressBookList == null) return;
-        var header = new
+        if (listOfPersonnel != null)
         {
-            typ = "JWT",
-            alg = "HS256"
-        };
-        var headerJson = JsonConvert.SerializeObject(header);
-        var headerBase64 = Base64UrlEncode(headerJson);
-        var startDate = DateTime.Now;
-        foreach (var addressBookItem in addressBookList)
-        {
-            var cacheKey = $"CheckInWarned:{addressBookItem.Id}:{DateTime.Today:yyyyMMdd}";
-            if (_cache.TryGetValue(cacheKey, out _)) continue;
+            var realNameList = listOfPersonnel.Select(e => e.RealName).ToList();
+            using var sr = new StreamReader(AppDomain.CurrentDomain.BaseDirectory + "AddressBook.json", Encoding.UTF8);
+            var content = sr.ReadToEnd();
+            var addressBookList = JsonConvert.DeserializeObject<List<AddressBookInfo>>(content);
 
-            var payload = new
+            addressBookList = addressBookList?.Where(e => realNameList.Contains(e.Name)).ToList();
+            if (addressBookList == null) return;
+            var header = new
             {
-                iat = 1734922017,
-                id = addressBookItem.Id,
-                jwtId = "2318736ce27645c39729dd6cbf6e3232",
-                uid = addressBookItem.Id,
-                tenantId = "5d89917712441d7a5073058c",
-                cid = "5d89917712441d7a5073058c",
-                mainId = addressBookItem.MainId,
-                avatar = addressBookItem.Avatar,
-                name = addressBookItem.Name,
-                account = addressBookItem.Sn,
-                mobile = addressBookItem.Mobile,
-                sn = addressBookItem.Sn,
-                group = "6274c1d256a7b338c43fb328",
-                groupName = "04.管网管理产线",
-                yhloNum = addressBookItem.YhloNum,
-                isAdmin = false,
-                channel = "app",
-                roles = new[]
-                {
-                    "6479adb956a7b33dbcce610c",
-                    "1826788029153456129",
-                    "6332ce1b56a7b316e0574808",
-                    "1775433892067655682",
-                    "1749600164359757825"
-                },
-                company = new
-                {
-                    id = "6274c1d256a7b338c43fb328",
-                    name = "04.管网管理产线",
-                    code = "647047646"
-                },
-                tokenfrom = "uniwim",
-                userType = "user",
-                exp = 1735008477
+                typ = "JWT",
+                alg = "HS256"
             };
-            var payloadJson = JsonConvert.SerializeObject(payload);
-            var payloadBase64 = Base64UrlEncode(payloadJson);
-            var jwt = $"{headerBase64}.{payloadBase64}.{fakeSignature}";
-            var client = new HttpClient();
-            client.DefaultRequestHeaders.Add("Authorization", jwt);
-            var response = client.GetAsync("http://122.225.71.14:10001/hd-oa/api/oaUserClockInRecord/clockInDataMonth?yearMonth=" + startDate.ToString("yyyy-MM")).Result;
-            var result = response.Content.ReadAsStringAsync().Result;
-            var resultModel = JsonConvert.DeserializeObject<AttendanceResponse>(result);
-            if (resultModel is not { Code: 200 }) continue;
-            var dayAttendanceList = resultModel.Data.DayVoList.FirstOrDefault(e => e.Day == DateTime.Now.Day);
-            if (dayAttendanceList == null) continue;
+            var headerJson = JsonConvert.SerializeObject(header);
+            var headerBase64 = Base64UrlEncode(headerJson);
+            var startDate = DateTime.Now;
+            foreach (var addressBookItem in addressBookList)
             {
-                if (dayAttendanceList.DetailList == null) continue;
-                foreach (var day in dayAttendanceList.DetailList)
-                    switch (day.ClockInType)
+                var cacheKey = $"CheckInWarned:{addressBookItem.Id}:{DateTime.Today:yyyyMMdd}";
+                if (Cache.TryGetValue(cacheKey, out _)) continue;
+
+                var payload = new
+                {
+                    iat = 1734922017,
+                    id = addressBookItem.Id,
+                    jwtId = "2318736ce27645c39729dd6cbf6e3232",
+                    uid = addressBookItem.Id,
+                    tenantId = "5d89917712441d7a5073058c",
+                    cid = "5d89917712441d7a5073058c",
+                    mainId = addressBookItem.MainId,
+                    avatar = addressBookItem.Avatar,
+                    name = addressBookItem.Name,
+                    account = addressBookItem.Sn,
+                    mobile = addressBookItem.Mobile,
+                    sn = addressBookItem.Sn,
+                    group = "6274c1d256a7b338c43fb328",
+                    groupName = "04.管网管理产线",
+                    yhloNum = addressBookItem.YhloNum,
+                    isAdmin = false,
+                    channel = "app",
+                    roles = new[]
                     {
-                        case "0" when day.ClockInStatus == 1 && day.ClockInStatus != 999:
-                            pushMessage += listOfPersonnel.FirstOrDefault(e => e.RealName == addressBookItem.Name)?.FlowerName + "-上班时间:" +
-                                           DateTime.Parse(day.ClockInTime).ToString("HH:mm:ss") + "\n";
-                            _cache.Set(cacheKey, true, new MemoryCacheEntryOptions
-                            {
-                                AbsoluteExpiration = DateTime.Today.AddDays(1).AddSeconds(-1)
-                            });
-                            break;
-                        // case "1" when day.ClockInStatus != 999:
-                        //     pushMessage += listOfPersonnel.FirstOrDefault(e => e.RealName == addressBookItem.Name)?.FlowerName + "-签退时间:" +
-                        //                    DateTime.Parse(day.ClockInTime).ToString("HH:mm:ss") + ";";
-                        //     break;
-                    }
+                        "6479adb956a7b33dbcce610c",
+                        "1826788029153456129",
+                        "6332ce1b56a7b316e0574808",
+                        "1775433892067655682",
+                        "1749600164359757825"
+                    },
+                    company = new
+                    {
+                        id = "6274c1d256a7b338c43fb328",
+                        name = "04.管网管理产线",
+                        code = "647047646"
+                    },
+                    tokenfrom = "uniwim",
+                    userType = "user",
+                    exp = 1735008477
+                };
+                var payloadJson = JsonConvert.SerializeObject(payload);
+                var payloadBase64 = Base64UrlEncode(payloadJson);
+                var jwt = $"{headerBase64}.{payloadBase64}.{fakeSignature}";
+                var client = new HttpClient();
+                client.DefaultRequestHeaders.Add("Authorization", jwt);
+                var response = client.GetAsync("http://122.225.71.14:10001/hd-oa/api/oaUserClockInRecord/clockInDataMonth?yearMonth=" + startDate.ToString("yyyy-MM")).Result;
+                var result = response.Content.ReadAsStringAsync().Result;
+                var resultModel = JsonConvert.DeserializeObject<AttendanceResponse>(result);
+                if (resultModel is not { Code: 200 }) continue;
+                var dayAttendanceList = resultModel.Data.DayVoList.FirstOrDefault(e => e.Day == DateTime.Now.Day);
+                if (dayAttendanceList == null) continue;
+                {
+                    if (dayAttendanceList.DetailList == null) continue;
+                    foreach (var day in dayAttendanceList.DetailList)
+                        switch (day.ClockInType)
+                        {
+                            case "0" when day.ClockInStatus == 1 && day.ClockInStatus != 999:
+                                pushMessage += listOfPersonnel.FirstOrDefault(e => e.RealName == addressBookItem.Name)?.FlowerName + "-上班时间:" +
+                                               DateTime.Parse(day.ClockInTime).ToString("HH:mm:ss") + "\n";
+                                Cache.Set(cacheKey, true, new MemoryCacheEntryOptions
+                                {
+                                    AbsoluteExpiration = DateTime.Today.AddDays(1).AddSeconds(-1)
+                                });
+                                break;
+                            // case "1" when day.ClockInStatus != 999:
+                            //     pushMessage += listOfPersonnel.FirstOrDefault(e => e.RealName == addressBookItem.Name)?.FlowerName + "-签退时间:" +
+                            //                    DateTime.Parse(day.ClockInTime).ToString("HH:mm:ss") + ";";
+                            //     break;
+                        }
+                }
             }
         }
 
@@ -361,7 +366,7 @@ public class HangFireHelper(IConfiguration configuration)
         using var formData = new MultipartFormDataContent();
         formData.Add(new StringContent("高危人员打卡提醒"), "title");
         formData.Add(new StringContent(pushMessage), "message");
-        formData.Add(new StringContent(configuration["PushMessagePriority"]!.ToString()), "priority");
+        formData.Add(new StringContent(configuration["PushMessagePriority"]!), "priority");
         try
         {
             var response = gotifyclient.PostAsync(url, formData).Result;
