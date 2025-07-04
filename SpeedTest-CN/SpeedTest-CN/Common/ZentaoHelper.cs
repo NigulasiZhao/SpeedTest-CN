@@ -140,13 +140,19 @@ public class ZentaoHelper(IConfiguration configuration, ILogger<ZentaoHelper> lo
         }
     }
 
+    /// <summary>
+    /// 计算任务耗时
+    /// </summary>
+    /// <param name="startDate">任务日期</param>
+    /// <param name="totalHours">当日工时</param>
+    /// <returns></returns>
     public List<TaskItem> AllocateWork(DateTime startDate, double totalHours)
     {
         var result = new List<TaskItem>();
         IDbConnection dbConnection = new NpgsqlConnection(configuration["Connection"]);
         var registerhours = dbConnection.Query<float>($@"select sum(registerhours) from public.zentaotask where eststarted = '{startDate:yyyy-MM-dd}'").First();
         totalHours -= registerhours;
-        var tasks = dbConnection.Query<TaskItem>($@"select id,estimate from public.zentaotask where (taskstatus ='wait' or taskstatus = 'doing') and eststarted = '{startDate:yyyy-MM-dd}'").ToList();
+        var tasks = dbConnection.Query<TaskItem>($@"select id,timeleft from public.zentaotask where (taskstatus ='wait' or taskstatus = 'doing') and eststarted = '{startDate:yyyy-MM-dd}'").ToList();
         var current = new DateTime(startDate.Year, startDate.Month, startDate.Day, 8, 30, 0);
 
         foreach (var task in tasks)
@@ -154,13 +160,13 @@ public class ZentaoHelper(IConfiguration configuration, ILogger<ZentaoHelper> lo
             var taskCopy = new TaskItem
             {
                 Id = task.Id,
-                Estimate = task.Estimate,
+                Timeleft = task.Timeleft,
                 StartTime = current
             };
 
             double timeAllocated = 0;
 
-            while (timeAllocated < task.Estimate && totalHours >= 0.5)
+            while (timeAllocated < task.Timeleft && totalHours >= 0.5)
             {
                 // 跳过中午12:00~13:00
                 if (current.Hour == 12 && current.Minute == 0)

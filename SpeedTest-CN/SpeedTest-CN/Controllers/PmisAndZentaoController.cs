@@ -41,30 +41,10 @@ public class PmisAndZentaoController(IConfiguration configuration, ILogger<Speed
     [Tags("禅道")]
     [EndpointSummary("完成任务")]
     [HttpGet]
-    public async Task<string> FinishTask(string token, string taskId)
+    public string FinishTask(DateTime finishedDate, double totalHours)
     {
-        var zentaoInfo = _configuration.GetSection("ZentaoInfo").Get<ZentaoInfo>();
-        var httpHelper = new HttpRequestHelper();
-        var getResponse = await httpHelper.PostAsync(zentaoInfo.Url + $"/tasks/{taskId}/finish", new
-        {
-            currentConsumed = 9,
-            assignedTo = "",
-            realStarted = "",
-            finishedDate = "",
-            comment = "任务完成"
-        }, new Dictionary<string, string> { { "Token", token } });
-        var outer = JsonSerializer.Deserialize<ZentaoResponse>(getResponse.Content.ReadAsStringAsync().Result);
-
-        // Step 2: 获取 data 字段，并再次反序列化
-        var options = new JsonSerializerOptions
-        {
-            Encoder = JavaScriptEncoder.Create(UnicodeRanges.All), // 确保不重新编码
-            WriteIndented = true
-        };
-
-        var jsonDoc = JsonDocument.Parse(outer.data); // 内层是个 JSON 字符串
-        var prettyJson = JsonSerializer.Serialize(jsonDoc.RootElement, options);
-        return prettyJson;
+        zentaoHelper.FinishZentaoTask(finishedDate, totalHours);
+        return "成功";
     }
 
 
