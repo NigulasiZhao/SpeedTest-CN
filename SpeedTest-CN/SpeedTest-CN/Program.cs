@@ -1,12 +1,11 @@
 using Hangfire;
 using Hangfire.PostgreSql;
 using Microsoft.AspNetCore.Localization;
-using Microsoft.Extensions.Configuration;
-using Npgsql;
 using SpeedTest_CN;
-using System.Data;
 using System.Globalization;
+using Scalar.AspNetCore;
 using Serilog;
+using SpeedTest_CN.Common;
 
 var builder = WebApplication.CreateBuilder(args);
 if (!Directory.Exists(AppDomain.CurrentDomain.BaseDirectory + "Logs")) Directory.CreateDirectory(AppDomain.CurrentDomain.BaseDirectory + "Logs");
@@ -35,6 +34,7 @@ builder.Services.AddHangfire(config =>
 builder.Services.AddHangfireServer();
 builder.Services.AddSingleton<HangFireHelper>();
 builder.Services.AddSingleton<DatabaseInitializer>();
+builder.Services.AddSingleton<ZentaoHelper>();
 var app = builder.Build();
 var zh = new CultureInfo("zh-CN");
 zh.DateTimeFormat.FullDateTimePattern = "yyyy-MM-dd HH:mm:ss";
@@ -60,7 +60,12 @@ using (var scope = app.Services.CreateScope())
 
 app.UseCors("AllowAll");
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment()) app.MapOpenApi();
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+    app.MapScalarApiReference();
+}
+
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
 {
     Authorization = new[] { new AllowAllDashboardAuthorizationFilter() }
