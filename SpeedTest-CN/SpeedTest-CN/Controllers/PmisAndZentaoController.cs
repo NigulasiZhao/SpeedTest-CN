@@ -9,7 +9,8 @@ namespace SpeedTest_CN.Controllers;
 
 [ApiController]
 [Route("api/[controller]/[action]")]
-public class PmisAndZentaoController(IConfiguration configuration, ILogger<SpeedTestController> logger, ZentaoHelper zentaoHelper) : Controller
+public class PmisAndZentaoController(IConfiguration configuration, ILogger<SpeedTestController> logger, ZentaoHelper zentaoHelper, AttendanceHelper attendanceHelper, PmisHelper pmisHelper)
+    : Controller
 {
     private readonly IConfiguration _configuration = configuration;
     private readonly ILogger<SpeedTestController> _logger = logger;
@@ -47,7 +48,6 @@ public class PmisAndZentaoController(IConfiguration configuration, ILogger<Speed
         return "成功";
     }
 
-
     [Tags("禅道")]
     [EndpointSummary("计算工时")]
     [HttpGet]
@@ -58,67 +58,37 @@ public class PmisAndZentaoController(IConfiguration configuration, ILogger<Speed
     }
 
     [Tags("PMIS")]
+    [EndpointSummary("根据日期计算工时")]
+    [HttpGet]
+    public double GetWorkHoursByDate(DateTime date)
+    {
+        var result = attendanceHelper.GetWorkHoursByDate(date);
+        return result;
+    }
+
+    [Tags("PMIS")]
     [EndpointSummary("获取已上报列表")]
     [HttpGet]
-    public async Task<string> QueryMy()
+    public QueryMyByDateOutput QueryMyByDate()
     {
-        var pmisInfo = _configuration.GetSection("PMISInfo").Get<PMISInfo>();
-        var httpHelper = new HttpRequestHelper();
-        var postResponse = await httpHelper.PostAsync(pmisInfo.Url + "/unioa/job/userWork/queryMy", new
-        {
-            index = 1,
-            size = 30,
-            conditions = new object[] { },
-            order = new object[] { },
-            data = new
-            {
-                status = (object)null,
-                hasFile = (object)null,
-                time = new object[] { }
-            }
-        }, new Dictionary<string, string> { { "authorization", pmisInfo.Authorization } });
-        return await postResponse.Content.ReadAsStringAsync();
+        return pmisHelper.QueryMyByDate();
     }
 
     [Tags("PMIS")]
     [EndpointSummary("获取工作明细")]
     [HttpGet]
-    public async Task<string> GetByDateAndUserId(string fillDate = "2025-06-27", string userId = "6316c6eb56a7b316e056face")
+    public GetByDateAndUserIdResponse QueryByDateAndUserId(string fillDate = "2025-06-27", string userId = "6316c6eb56a7b316e056face")
     {
-        var pmisInfo = _configuration.GetSection("PMISInfo").Get<PMISInfo>();
-        var httpHelper = new HttpRequestHelper();
-        var getResponse = await httpHelper.GetAsync(pmisInfo.Url + $"/unioa/job/userWork/getByDateAndUserId?fillDate={fillDate}&userId={userId}&type=0",
-            new Dictionary<string, string> { { "authorization", pmisInfo.Authorization } });
-        var result = JsonSerializer.Deserialize<GetByDateAndUserIdResponse>(getResponse.Content.ReadAsStringAsync().Result);
-        if (!result.Success || result.Response == null) return JsonSerializer.Serialize(result);
-        result.Response.status = "1";
-        foreach (var detailItem in result.Response.details)
-        {
-            detailItem.target = detailItem.description;
-            detailItem.planFinishAct = detailItem.description;
-            detailItem.responsibility = "负责基于.NET平台的后端代码开发与单元测试";
-            detailItem.workType = "代码开发";
-            detailItem.realJob = detailItem.description;
-        }
-
-        return JsonSerializer.Serialize(result);
+        var result = pmisHelper.QueryWorkDetailByDate(fillDate, userId);
+        return result;
     }
 
-    public static double GetRoundedHours(DateTime actualTime)
+    [Tags("PMIS")]
+    [EndpointSummary("提交工作日志")]
+    [HttpGet]
+    public PMISInsertResponse CommitWorkLogByDate(string fillDate = "2025-06-27", string userId = "6316c6eb56a7b316e056face")
     {
-        // 当天的 8:30 时间
-        var baseTime = new DateTime(actualTime.Year, actualTime.Month, actualTime.Day, 8, 30, 0);
-
-        // 如果实际时间早于8:30，返回0
-        if (actualTime <= baseTime)
-            return 0;
-
-        // 计算实际时间与8:30之间的时间差（以小时表示）
-        var hoursDiff = (actualTime - baseTime).TotalHours;
-
-        // 向下取 0.5 的倍数
-        var rounded = Math.Floor(hoursDiff * 2) / 2.0;
-
-        return rounded;
+        var result = pmisHelper.CommitWorkLogByDate(fillDate, userId);
+        return result;
     }
 }

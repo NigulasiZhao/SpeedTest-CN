@@ -24,9 +24,9 @@ public class Response
     public string groupId { get; set; }
     public string groupName { get; set; }
     public string fillDate { get; set; }
-    public string submitTime { get; set; }
-    public string status { get; set; }
-    public bool? hasFile { get; set; }
+    public long? submitTime { get; set; }
+    public int? status { get; set; }
+    public int? hasFile { get; set; }
     public string responsibility1 { get; set; }
     public string responsibilityFile1 { get; set; }
     public string responsibility2 { get; set; }
@@ -48,13 +48,13 @@ public class Response
     public string otherContent { get; set; }
     public string otherFile { get; set; }
     public string suggestContent { get; set; }
-    public bool? hasComment { get; set; }
-    public bool? hasNewComment { get; set; }
+    public int? hasComment { get; set; }
+    public int? hasNewComment { get; set; }
     public string created { get; set; }
     public string updater { get; set; }
     public string creater { get; set; }
     public string updated { get; set; }
-    public bool? syncPms { get; set; }
+    public int? syncPms { get; set; }
     public string beginDate { get; set; }
     public string endDate { get; set; }
     public string dataRange { get; set; }
@@ -95,7 +95,7 @@ public class Detail
     public string userId { get; set; }
     public string description { get; set; }
     public string target { get; set; }
-    public string useStatus { get; set; }
+    public int? useStatus { get; set; }
     public string taskConfirmTime { get; set; }
     public string taskName { get; set; }
     public string planBeginTime { get; set; }
@@ -123,4 +123,11 @@ public class Detail
     public string wimpicFile { get; set; }
     public string travelId { get; set; }
     public string travelBusinessKey { get; set; }
+}
+
+public class PMISInsertResponse
+{
+    public int Code { get; set; }
+    public string Message { get; set; }
+    public bool Success { get; set; }
 }
