@@ -37,6 +37,7 @@ builder.Services.AddSingleton<DatabaseInitializer>();
 builder.Services.AddSingleton<ZentaoHelper>();
 builder.Services.AddSingleton<AttendanceHelper>();
 builder.Services.AddSingleton<PmisHelper>();
+builder.Services.AddSingleton<PushMessageHelper>();
 var app = builder.Build();
 var zh = new CultureInfo("zh-CN");
 zh.DateTimeFormat.FullDateTimePattern = "yyyy-MM-dd HH:mm:ss";
