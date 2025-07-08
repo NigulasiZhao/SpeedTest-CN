@@ -8,7 +8,7 @@ using SpeedTest_CN.Models.PmisAndZentao;
 
 namespace SpeedTest_CN.Common;
 
-public class ZentaoHelper(IConfiguration configuration, ILogger<ZentaoHelper> logger)
+public class ZentaoHelper(IConfiguration configuration, ILogger<ZentaoHelper> logger, PushMessageHelper pushMessageHelper)
 {
     /// <summary>
     /// 获取禅道token
@@ -112,31 +112,40 @@ public class ZentaoHelper(IConfiguration configuration, ILogger<ZentaoHelper> lo
     /// </summary>
     public void FinishZentaoTask(DateTime finishedDate, double totalHours)
     {
+        var pushMessage = string.Empty;
         try
         {
             IDbConnection dbConnection = new NpgsqlConnection(configuration["Connection"]);
-            var zentaoToken = GetZentaoToken();
             var zentaoInfo = configuration.GetSection("ZentaoInfo").Get<ZentaoInfo>();
             var httpHelper = new HttpRequestHelper();
             var tasklist = AllocateWork(finishedDate, totalHours);
-            foreach (var task in tasklist)
+            if (tasklist.Count > 0)
             {
-                var getResponse = httpHelper.PostAsync(zentaoInfo.Url + $"/api.php/v1/tasks/{task.Id}/finish", new
+                var zentaoToken = GetZentaoToken();
+                foreach (var task in tasklist)
                 {
-                    currentConsumed = task.TimeConsuming,
-                    assignedTo = "",
-                    realStarted = task.StartTime.ToString("yyyy-MM-dd HH:mm:ss"),
-                    finishedDate = task.EndTime.ToString("yyyy-MM-dd HH:mm:ss"),
-                    comment = "任务完成"
-                }, new Dictionary<string, string> { { "Token", zentaoToken } }).Result;
-                var outer = JsonSerializer.Deserialize<FinishZentaoTaskResponse>(getResponse.Content.ReadAsStringAsync().Result);
-                dbConnection.Execute(
-                    $@"UPDATE public.zentaotask SET consumed =consumed+ {outer.consumed},registerhours = registerhours + {task.TimeConsuming},taskstatus = '{outer.status}' WHERE ID = {outer.id}");
+                    var getResponse = httpHelper.PostAsync(zentaoInfo.Url + $"/api.php/v1/tasks/{task.Id}/finish", new
+                    {
+                        currentConsumed = task.TimeConsuming,
+                        assignedTo = "",
+                        realStarted = task.StartTime.ToString("yyyy-MM-dd HH:mm:ss"),
+                        finishedDate = task.EndTime.ToString("yyyy-MM-dd HH:mm:ss"),
+                        comment = "任务完成"
+                    }, new Dictionary<string, string> { { "Token", zentaoToken } }).Result;
+                    var outer = JsonSerializer.Deserialize<FinishZentaoTaskResponse>(getResponse.Content.ReadAsStringAsync().Result);
+                    dbConnection.Execute(
+                        $@"UPDATE public.zentaotask SET consumed =consumed+ {outer.consumed},registerhours = registerhours + {task.TimeConsuming},taskstatus = '{outer.status}' WHERE ID = {outer.id}");
+                }
+
+                pushMessage = "已处理 " + tasklist.Count + " 条任务\n共登记 " + tasklist.Sum(e => e.TimeConsuming) + " 工时";
+                pushMessageHelper.Push("禅道", pushMessage, PushMessageHelper.PushIcon.Zentao);
             }
         }
         catch (Exception e)
         {
-            logger.LogError("同步禅道任务异常:" + e.Message);
+            pushMessage = "禅道完成任务异常:" + e.Message;
+            pushMessageHelper.Push("禅道", pushMessage, PushMessageHelper.PushIcon.Zentao);
+            logger.LogError("禅道完成任务异常:" + e.Message);
         }
     }
 
@@ -150,9 +159,10 @@ public class ZentaoHelper(IConfiguration configuration, ILogger<ZentaoHelper> lo
     {
         var result = new List<TaskItem>();
         IDbConnection dbConnection = new NpgsqlConnection(configuration["Connection"]);
-        var registerhours = dbConnection.Query<float>($@"select sum(registerhours) from public.zentaotask where eststarted = '{startDate:yyyy-MM-dd}'").First();
+        var registerhours = dbConnection.Query<float>($@"select sum(registerhours) from public.zentaotask where to_char(eststarted,'yyyy-MM-dd') = '{startDate:yyyy-MM-dd}'").First();
         totalHours -= registerhours;
-        var tasks = dbConnection.Query<TaskItem>($@"select id,timeleft from public.zentaotask where (taskstatus ='wait' or taskstatus = 'doing') and eststarted = '{startDate:yyyy-MM-dd}'").ToList();
+        var tasks = dbConnection
+            .Query<TaskItem>($@"select id,timeleft from public.zentaotask where (taskstatus ='wait' or taskstatus = 'doing') and to_char(eststarted,'yyyy-MM-dd') = '{startDate:yyyy-MM-dd}'").ToList();
         var current = new DateTime(startDate.Year, startDate.Month, startDate.Day, 8, 30, 0);
 
         foreach (var task in tasks)

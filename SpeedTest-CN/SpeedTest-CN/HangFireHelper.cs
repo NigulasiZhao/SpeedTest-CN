@@ -10,10 +10,12 @@ using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
 using Microsoft.Extensions.Caching.Memory;
+using SpeedTest_CN.Common;
+using SpeedTest_CN.Models.PmisAndZentao;
 
 namespace SpeedTest_CN;
 
-public class HangFireHelper(IConfiguration configuration)
+public class HangFireHelper(IConfiguration configuration, PushMessageHelper pushMessageHelper, AttendanceHelper attendanceHelper, PmisHelper pmisHelper, ZentaoHelper zentaoHelper)
 {
     public void StartHangFireTask()
     {
@@ -21,9 +23,11 @@ public class HangFireHelper(IConfiguration configuration)
         //每小时0 0 * * * ?
         //每五分钟0 0/5 * * * ?
         //RecurringJob.AddOrUpdate("SpeedTest", () => SpeedTest(), "0 0 */1 * * ?", new RecurringJobOptions { TimeZone = TimeZoneInfo.Local });
-        RecurringJob.AddOrUpdate("AttendanceRecord", () => AttendanceRecord(), "0 0 */3 * * ?", new RecurringJobOptions { TimeZone = TimeZoneInfo.Local });
+        RecurringJob.AddOrUpdate("AttendanceRecord", () => AttendanceRecord(), "0 0/10 * * * ?", new RecurringJobOptions { TimeZone = TimeZoneInfo.Local });
         RecurringJob.AddOrUpdate("KeepRecord", () => KeepRecord(), "0 0 */3 * * ?", new RecurringJobOptions { TimeZone = TimeZoneInfo.Local });
         RecurringJob.AddOrUpdate("CheckInWarning", () => CheckInWarning(), "0 0/10 * * * ?", new RecurringJobOptions { TimeZone = TimeZoneInfo.Local });
+        RecurringJob.AddOrUpdate("SynchronizationZentaoTask", () => SynchronizationZentaoTask(), "0 0 * * * ?", new RecurringJobOptions { TimeZone = TimeZoneInfo.Local });
+        RecurringJob.AddOrUpdate("FinishZentaoTask", () => FinishZentaoTask(), "0 0/10 * * * ?", new RecurringJobOptions { TimeZone = TimeZoneInfo.Local });
     }
 
     private static readonly MemoryCache Cache = new(new MemoryCacheOptions());
@@ -58,80 +62,66 @@ public class HangFireHelper(IConfiguration configuration)
                                                                                                      0, 
                                                                                                      0)
                                   """);
-            if (!string.IsNullOrEmpty(configuration["PushMessageUrl"])) PushMessage(speedResult);
+            //if (!string.IsNullOrEmpty(configuration["PushMessageUrl"])) PushMessage(speedResult);
             dbConnection.Dispose();
         }
         catch (Exception)
         {
             // ignored
         }
-        // }
-        //using var ExtractionInuLogConn = GetConnection("User ID=productgis;Password=hdkj;Host=192.168.88.31;Port=5432;Database=lunch;Pooling=true;CommandTimeout=1200;");
-        //List<lunchInfo> RecoedList = ExtractionInuLogConn.Query<lunchInfo>($@"select  lunchname,count(0) as TotalCount from lunchrecord where yearflag = '{DateTime.Now.Year}' group by lunchname order by TotalCount desc").ToList();
-    }
-
-    public void PushMessage(Server speedResult)
-    {
-        var url = configuration["PushMessageUrl"];
-        using var client = new HttpClient();
-        // 创建 MultipartFormDataContent
-        using var formData = new MultipartFormDataContent();
-        // 添加表单字段
-        formData.Add(new StringContent(configuration["PushMessageTitle"]!), "title");
-        formData.Add(
-            new StringContent(configuration["PushMessageContent"]!.Replace("downloadSpeed", speedResult.downloadSpeed.ToString(CultureInfo.InvariantCulture))
-                .Replace("uploadSpeed", speedResult.uploadSpeed.ToString(CultureInfo.InvariantCulture))
-                .Replace("Latency", speedResult.Latency.ToString())), "message");
-        formData.Add(new StringContent(configuration["PushMessagePriority"]!), "priority");
-
-        try
-        {
-            // 发送 POST 请求
-            var response = client.PostAsync(url, formData).Result;
-
-            // 确保请求成功
-            response.EnsureSuccessStatusCode();
-
-            // 输出返回的内容
-            var responseBody = response.Content.ReadAsStringAsync().Result;
-            Console.WriteLine("Response: " + responseBody);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("Error: " + ex.Message);
-        }
     }
 
     public void AttendanceRecord()
     {
+        var insertIdent = false;
         IDbConnection dbConnection = new NpgsqlConnection(configuration["Connection"]);
         var client = new HttpClient();
         client.DefaultRequestHeaders.Add("Authorization", configuration["yinuotoken"]);
-        var startDate = DateTime.Now.AddDays(-1);
+        var startDate = DateTime.Now;
         var response = client.GetAsync("http://122.225.71.14:10001/hd-oa/api/oaUserClockInRecord/clockInDataMonth?yearMonth=" + startDate.ToString("yyyy-MM")).Result;
         var result = response.Content.ReadAsStringAsync().Result;
         var resultModel = JsonConvert.DeserializeObject<AttendanceResponse>(result);
         if (resultModel is { Code: 200 })
         {
-            dbConnection.Execute($"delete from public.attendancerecord where attendancemonth = '{startDate:yyyy-MM}'");
-            dbConnection.Execute($"delete from public.attendancerecordday where to_char(attendancedate,'yyyy-mm') = '{startDate:yyyy-MM}'");
-            dbConnection.Execute($"delete from public.attendancerecorddaydetail where to_char(attendancedate,'yyyy-mm') = '{startDate:yyyy-MM}'");
-            dbConnection.Execute(
-                $"INSERT INTO public.attendancerecord(attendancemonth,workdays,latedays,earlydays) VALUES('{startDate:yyyy-MM}',{resultModel.Data.WorkDays},{resultModel.Data.LateDays},{resultModel.Data.EarlyDays});");
-            foreach (var item in resultModel.Data.DayVoList)
+            //查询已有的今日打卡记录
+            var todayAttendanceList = dbConnection.Query<WorkHoursInOutTime>($@"select
+                                            	clockintype,
+                                            	max(clockintime) as clockintime
+                                            from
+                                            	public.attendancerecorddaydetail
+                                            where
+                                            	to_char(attendancedate,'yyyy-MM-dd') = '{DateTime.Now:yyyy-MM-dd}'
+                                            group by
+                                            	clockintype").ToList();
+            if (resultModel.Data.DayVoList.Count > 0)
+                foreach (var daydetail in resultModel.Data.DayVoList.Where(e => e.Day == DateTime.Today.Day))
+                    if (daydetail.DetailList != null)
+                        foreach (var daydetailitem in daydetail.DetailList)
+                            if (todayAttendanceList.Where(e => e.ClockInType == int.Parse(daydetailitem.ClockInType) && e.ClockInTime == DateTime.Parse(daydetailitem.ClockInTime)).Count() == 0)
+                                insertIdent = true;
+
+            if (insertIdent)
             {
-                var flagedate = DateTime.Parse(startDate.ToString("yyyy-MM") + "-" + item.Day);
-                if (item.WorkHours == null) continue;
-                dbConnection.Execute($"""
-                                      INSERT INTO public.attendancerecordday(untilthisday,day,checkinrule,isnormal,isabnormal,isapply,clockinnumber,workhours,attendancedate)
-                                                                                              VALUES({item.UntilThisDay},{item.Day},'{item.CheckInRule}','{item.IsNormal}','{item.IsAbnormal}','{item.IsApply}',{item.ClockInNumber},{item.WorkHours},to_timestamp('{flagedate:yyyy-MM-dd 00:00:00}', 'yyyy-mm-dd hh24:mi:ss'));
-                                      """);
-                if (item.DetailList != null)
-                    foreach (var daydetail in item.DetailList)
-                        dbConnection.Execute($"""
-                                              INSERT INTO public.attendancerecorddaydetail(id,recordid,clockintype,clockintime,attendancedate)
-                                                                                                      VALUES({daydetail.Id},{daydetail.RecordId},'{daydetail.ClockInType}',to_timestamp('{daydetail.ClockInTime}', 'yyyy-mm-dd hh24:mi:ss'),to_timestamp('{flagedate:yyyy-MM-dd 00:00:00}', 'yyyy-mm-dd hh24:mi:ss'));
-                                              """);
+                dbConnection.Execute($"delete from public.attendancerecord where attendancemonth = '{startDate:yyyy-MM}'");
+                dbConnection.Execute($"delete from public.attendancerecordday where to_char(attendancedate,'yyyy-mm') = '{startDate:yyyy-MM}'");
+                dbConnection.Execute($"delete from public.attendancerecorddaydetail where to_char(attendancedate,'yyyy-mm') = '{startDate:yyyy-MM}'");
+                dbConnection.Execute(
+                    $"INSERT INTO public.attendancerecord(attendancemonth,workdays,latedays,earlydays) VALUES('{startDate:yyyy-MM}',{resultModel.Data.WorkDays},{resultModel.Data.LateDays},{resultModel.Data.EarlyDays});");
+                foreach (var item in resultModel.Data.DayVoList)
+                {
+                    var flagedate = DateTime.Parse(startDate.ToString("yyyy-MM") + "-" + item.Day);
+                    if (item.WorkHours == null) continue;
+                    dbConnection.Execute($"""
+                                          INSERT INTO public.attendancerecordday(untilthisday,day,checkinrule,isnormal,isabnormal,isapply,clockinnumber,workhours,attendancedate)
+                                                                                                  VALUES({item.UntilThisDay},{item.Day},'{item.CheckInRule}','{item.IsNormal}','{item.IsAbnormal}','{item.IsApply}',{item.ClockInNumber},{item.WorkHours},to_timestamp('{flagedate:yyyy-MM-dd 00:00:00}', 'yyyy-mm-dd hh24:mi:ss'));
+                                          """);
+                    if (item.DetailList != null)
+                        foreach (var daydetail in item.DetailList)
+                            dbConnection.Execute($"""
+                                                  INSERT INTO public.attendancerecorddaydetail(id,recordid,clockintype,clockintime,attendancedate)
+                                                                                                          VALUES({daydetail.Id},{daydetail.RecordId},'{daydetail.ClockInType}',to_timestamp('{daydetail.ClockInTime}', 'yyyy-mm-dd hh24:mi:ss'),to_timestamp('{flagedate:yyyy-MM-dd 00:00:00}', 'yyyy-mm-dd hh24:mi:ss'));
+                                                  """);
+                }
             }
         }
 
@@ -347,37 +337,7 @@ public class HangFireHelper(IConfiguration configuration)
         }
 
         if (string.IsNullOrEmpty(pushMessage)) return;
-        var barkclient = new HttpClient();
-        var barkUrl = configuration.GetSection("BarkUrl").Get<string>();
-        var data = JsonConvert.SerializeObject(new
-        {
-            body = pushMessage,
-            title = "高危人员打卡提醒",
-            badge = 1,
-            icon = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/netcam-studio.png",
-            group = ""
-        });
-        var byteContent = new ByteArrayContent(Encoding.UTF8.GetBytes(data));
-        byteContent.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-        barkclient.PostAsync(barkUrl, byteContent);
-        if (string.IsNullOrEmpty(configuration["PushMessageUrl"])) return;
-        var url = configuration["PushMessageUrl"];
-        using var gotifyclient = new HttpClient();
-        using var formData = new MultipartFormDataContent();
-        formData.Add(new StringContent("高危人员打卡提醒"), "title");
-        formData.Add(new StringContent(pushMessage), "message");
-        formData.Add(new StringContent(configuration["PushMessagePriority"]!), "priority");
-        try
-        {
-            var response = gotifyclient.PostAsync(url, formData).Result;
-            response.EnsureSuccessStatusCode();
-            var responseBody = response.Content.ReadAsStringAsync().Result;
-            Console.WriteLine("Response: " + responseBody);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("Error: " + ex.Message);
-        }
+        pushMessageHelper.Push("高危人员打卡提醒", pushMessage, PushMessageHelper.PushIcon.Camera);
     }
 
     private static string Base64UrlEncode(string input)
@@ -387,5 +347,41 @@ public class HangFireHelper(IConfiguration configuration)
             .TrimEnd('=')
             .Replace('+', '-')
             .Replace('/', '_');
+    }
+
+    /// <summary>
+    /// 同步禅道任务
+    /// </summary>
+    public void SynchronizationZentaoTask()
+    {
+        zentaoHelper.SynchronizationZentaoTask();
+    }
+
+    /// <summary>
+    /// 完成禅道任务
+    /// </summary>
+    public void FinishZentaoTask()
+    {
+        var workHours = attendanceHelper.GetWorkHoursByDate(DateTime.Today);
+        if (workHours > 0) zentaoHelper.FinishZentaoTask(DateTime.Today, workHours);
+    }
+
+    public void CommitWorkLogByDate()
+    {
+        var pmisInfo = configuration.GetSection("PMISInfo").Get<PMISInfo>();
+        IDbConnection dbConnection = new NpgsqlConnection(configuration["Connection"]);
+        var taskFinishInfo = dbConnection.Query<TaskFinishInfo>($@"SELECT
+                                        COUNT(CASE WHEN taskstatus = 'done' THEN 1 END) AS donecount,
+                                        COUNT(CASE WHEN taskstatus != 'done' THEN 1 END) AS notdonecount,
+                                        count(0) as allcount
+                                    FROM public.zentaotask
+                                    WHERE to_char(eststarted, 'yyyy-MM-dd') = '{DateTime.Now:yyyy-MM-dd}'").First();
+        if (taskFinishInfo.AllCount > 0 && taskFinishInfo is { NotDoneCount: 0, DoneCount: > 0 })
+        {
+            var reportList = pmisHelper.QueryMyByDate();
+            //确定未上报
+            var record = reportList.Response.rows.FirstOrDefault(e => e.fillDate == DateTime.Now.ToString("yyyy-MM-dd"));
+            if (record == null) pmisHelper.CommitWorkLogByDate(DateTime.Now.ToString("yyyy-MM-dd"), pmisInfo.UserId);
+        }
     }
 }

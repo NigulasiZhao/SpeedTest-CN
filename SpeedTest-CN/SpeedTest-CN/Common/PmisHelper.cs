@@ -3,7 +3,7 @@ using SpeedTest_CN.Models.PmisAndZentao;
 
 namespace SpeedTest_CN.Common;
 
-public class PmisHelper(IConfiguration configuration, ILogger<ZentaoHelper> logger)
+public class PmisHelper(IConfiguration configuration, ILogger<ZentaoHelper> logger, PushMessageHelper pushMessageHelper)
 {
     /// <summary>
     /// 查询日报列表
@@ -44,18 +44,6 @@ public class PmisHelper(IConfiguration configuration, ILogger<ZentaoHelper> logg
             new Dictionary<string, string> { { "authorization", pmisInfo.Authorization } }).Result;
         var result = JsonSerializer.Deserialize<GetByDateAndUserIdResponse>(getResponse.Content.ReadAsStringAsync().Result);
         return result;
-        // if (!result.Success || result.Response == null) return JsonSerializer.Serialize(result);
-        // result.Response.status = "1";
-        // foreach (var detailItem in result.Response.details)
-        // {
-        //     detailItem.target = detailItem.description;
-        //     detailItem.planFinishAct = detailItem.description;
-        //     detailItem.responsibility = "负责基于.NET平台的后端代码开发与单元测试";
-        //     detailItem.workType = "代码开发";
-        //     detailItem.realJob = detailItem.description;
-        // }
-
-        //return JsonSerializer.Serialize(result);
     }
 
     /// <summary>
@@ -67,9 +55,9 @@ public class PmisHelper(IConfiguration configuration, ILogger<ZentaoHelper> logg
     {
         var pmisInfo = configuration.GetSection("PMISInfo").Get<PMISInfo>();
         var httpHelper = new HttpRequestHelper();
-        var WorkLogBody = QueryWorkDetailByDate(fillDate, userId);
-        WorkLogBody.Response.status = 1;
-        foreach (var detailItem in WorkLogBody.Response.details)
+        var workLogBody = QueryWorkDetailByDate(fillDate, userId);
+        workLogBody.Response.status = 1;
+        foreach (var detailItem in workLogBody.Response.details)
         {
             detailItem.target = detailItem.description;
             detailItem.planFinishAct = detailItem.description;
@@ -78,8 +66,11 @@ public class PmisHelper(IConfiguration configuration, ILogger<ZentaoHelper> logg
             detailItem.realJob = detailItem.description;
         }
 
-        var postRespone = httpHelper.PostAsync(pmisInfo.Url + "/unioa/job/userWork/insert", WorkLogBody.Response, new Dictionary<string, string> { { "authorization", pmisInfo.Authorization } })
+        var postRespone = httpHelper.PostAsync(pmisInfo.Url + "/unioa/job/userWork/insert", workLogBody.Response, new Dictionary<string, string> { { "authorization", pmisInfo.Authorization } })
             .Result;
-        return JsonSerializer.Deserialize<PMISInsertResponse>(postRespone.Content.ReadAsStringAsync().Result);
+        var result = JsonSerializer.Deserialize<PMISInsertResponse>(postRespone.Content.ReadAsStringAsync().Result);
+        if (result.Success) pushMessageHelper.Push("日报", $"{DateTime.Now:yyyy-MM-dd}已发送\n今日完成" + workLogBody.Response.details.Count + " 条任务", PushMessageHelper.PushIcon.Note);
+
+        return result;
     }
 }

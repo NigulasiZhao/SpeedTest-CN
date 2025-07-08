@@ -3,6 +3,7 @@
 public class PMISInfo
 {
     public string Url { get; set; }
+    public string UserId { get; set; }
     public string Authorization { get; set; }
 }
 

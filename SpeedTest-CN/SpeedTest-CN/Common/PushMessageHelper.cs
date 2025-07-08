@@ -63,8 +63,9 @@ public class PushMessageHelper(IConfiguration configuration)
             PushIcon.Default => "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/netcam-studio.png",
             PushIcon.Camera => "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/netcam-studio.png",
             PushIcon.Alert => "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/alert.png",
-            PushIcon.Person => "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/person.png",
+            PushIcon.Zentao => "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/flowise.png",
             PushIcon.Warning => "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/warning.png",
+            PushIcon.Note => "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/pritunl.png",
             PushIcon.Custom => customUrl ?? "", // 如果是自定义，取 customUrl
             _ => ""
         };
@@ -75,8 +76,9 @@ public class PushMessageHelper(IConfiguration configuration)
         Default, // 默认图标
         Camera, // 摄像头
         Alert, // 警报
-        Person, // 人形图标
+        Zentao, // 人形图标
         Warning, // 警告图标
-        Custom // 自定义 URL
+        Custom, // 自定义 URL
+        Note
     }
 }

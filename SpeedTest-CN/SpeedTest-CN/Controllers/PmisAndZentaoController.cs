@@ -1,7 +1,4 @@
-﻿using System.Text.Encodings.Web;
-using System.Text.Json;
-using System.Text.Unicode;
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
 using SpeedTest_CN.Common;
 using SpeedTest_CN.Models.PmisAndZentao;
 
@@ -9,7 +6,13 @@ namespace SpeedTest_CN.Controllers;
 
 [ApiController]
 [Route("api/[controller]/[action]")]
-public class PmisAndZentaoController(IConfiguration configuration, ILogger<SpeedTestController> logger, ZentaoHelper zentaoHelper, AttendanceHelper attendanceHelper, PmisHelper pmisHelper)
+public class PmisAndZentaoController(
+    IConfiguration configuration,
+    ILogger<SpeedTestController> logger,
+    ZentaoHelper zentaoHelper,
+    AttendanceHelper attendanceHelper,
+    PmisHelper pmisHelper,
+    PushMessageHelper pushMessageHelper)
     : Controller
 {
     private readonly IConfiguration _configuration = configuration;
@@ -77,18 +80,29 @@ public class PmisAndZentaoController(IConfiguration configuration, ILogger<Speed
     [Tags("PMIS")]
     [EndpointSummary("获取工作明细")]
     [HttpGet]
-    public GetByDateAndUserIdResponse QueryByDateAndUserId(string fillDate = "2025-06-27", string userId = "6316c6eb56a7b316e056face")
+    public GetByDateAndUserIdResponse QueryByDateAndUserId(string fillDate = "2025-06-27")
     {
-        var result = pmisHelper.QueryWorkDetailByDate(fillDate, userId);
+        var pmisInfo = configuration.GetSection("PMISInfo").Get<PMISInfo>();
+        var result = pmisHelper.QueryWorkDetailByDate(fillDate, pmisInfo.UserId);
         return result;
     }
 
     [Tags("PMIS")]
     [EndpointSummary("提交工作日志")]
     [HttpGet]
-    public PMISInsertResponse CommitWorkLogByDate(string fillDate = "2025-06-27", string userId = "6316c6eb56a7b316e056face")
+    public PMISInsertResponse CommitWorkLogByDate(string fillDate = "2025-06-27")
     {
-        var result = pmisHelper.CommitWorkLogByDate(fillDate, userId);
+        var pmisInfo = configuration.GetSection("PMISInfo").Get<PMISInfo>();
+        var result = pmisHelper.CommitWorkLogByDate(fillDate, pmisInfo.UserId);
         return result;
+    }
+
+    [Tags("PMIS")]
+    [EndpointSummary("测试推送")]
+    [HttpGet]
+    public string PushMessage()
+    {
+        pushMessageHelper.Push("禅道", "pushMessage", PushMessageHelper.PushIcon.Zentao);
+        return "";
     }
 }
