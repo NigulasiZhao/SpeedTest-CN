@@ -21,3 +21,10 @@ public class PMISInsertResponse
     public string Message { get; set; }
     public bool Success { get; set; }
 }
+
+public class WeekDayInfo
+{
+    public int WeekNumber { get; set; }
+    public string StartOfWeek { get; set; }
+    public string EndOfWeek { get; set; }
+}

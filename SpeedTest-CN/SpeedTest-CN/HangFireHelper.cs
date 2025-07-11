@@ -419,6 +419,11 @@ public class HangFireHelper(
                                                                         	and taskstatus = 'wait'
                                                                         order by
                                                                         	timeleft desc").FirstOrDefault();
+
+        if (zentaoInfo?.project == null || zentaoInfo?.id == null || string.IsNullOrEmpty(zentaoInfo?.projectcode)) return;
+        if (string.IsNullOrEmpty(zentaoInfo?.projectcode)) return;
+        var projectInfo = pmisHelper.GetProjectInfo(zentaoInfo?.projectcode);
+        if (string.IsNullOrEmpty(projectInfo.contract_id) || string.IsNullOrEmpty(projectInfo.contract_unit) || string.IsNullOrEmpty(projectInfo.project_name)) return;
         var chatOptions = new ChatOptions { Tools = [] };
         var chatHistory = new List<ChatMessage>
         {
@@ -428,10 +433,6 @@ public class HangFireHelper(
         var res = chatClient.GetResponseAsync(chatHistory, chatOptions).Result;
         var workContent = res.Text;
         if (string.IsNullOrEmpty(workContent)) return;
-        if (zentaoInfo?.project == null || zentaoInfo?.id == null || string.IsNullOrEmpty(zentaoInfo?.projectcode)) return;
-        if (string.IsNullOrEmpty(zentaoInfo?.projectcode)) return;
-        var projectInfo = pmisHelper.GetProjectInfo(zentaoInfo?.projectcode);
-        if (string.IsNullOrEmpty(projectInfo.contract_id) || string.IsNullOrEmpty(projectInfo.contract_unit) || string.IsNullOrEmpty(projectInfo.project_name)) return;
         var insertId = pmisHelper.OvertimeWork_Insert(projectInfo, zentaoInfo?.id.ToString(), workContent);
         if (string.IsNullOrEmpty(insertId)) return;
         var processId = pmisHelper.OvertimeWork_CreateOrder(projectInfo, insertId, zentaoInfo?.id.ToString(), workContent);
@@ -439,6 +440,8 @@ public class HangFireHelper(
         {
             JObject updateResult = pmisHelper.OvertimeWork_Update(projectInfo, insertId, zentaoInfo?.id.ToString(), processId, workContent);
             if (updateResult["Response"] != null)
+            {
+                pushMessageHelper.Push("加班申请", DateTime.Now.ToString("yyyy-MM-dd") + " 加班申请已提交\n加班事由：" + workContent, PushMessageHelper.PushIcon.OverTime);
                 dbConnection.Execute($@"
                                       insert
                                       	into
@@ -463,6 +466,7 @@ public class HangFireHelper(
                                       '{updateResult["Response"]?["work_date"]}',
                                       '{updateResult["Response"]?["subject_matter"]}',
                                       '{updateResult["Response"]?["id"]}');");
+            }
         }
     }
 }

@@ -1,13 +1,18 @@
-﻿using System.Net.Http.Headers;
+﻿using System.Data;
+using System.Globalization;
+using System.Net.Http.Headers;
 using System.Security.Cryptography;
+using Dapper;
+using Microsoft.Extensions.AI;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Npgsql;
 using SpeedTest_CN.Models.PmisAndZentao;
 using JsonSerializer = System.Text.Json.JsonSerializer;
 
 namespace SpeedTest_CN.Common;
 
-public class PmisHelper(IConfiguration configuration, ILogger<ZentaoHelper> logger, PushMessageHelper pushMessageHelper, TokenService tokenService)
+public class PmisHelper(IConfiguration configuration, ILogger<ZentaoHelper> logger, PushMessageHelper pushMessageHelper, TokenService tokenService, IChatClient chatClient)
 {
     /// <summary>
     /// 查询日报列表
@@ -270,6 +275,11 @@ public class PmisHelper(IConfiguration configuration, ILogger<ZentaoHelper> logg
         return ProcessId;
     }
 
+    /// <summary>
+    /// 查询工单
+    /// </summary>
+    /// <param name="id"></param>
+    /// <returns></returns>
     public JObject OvertimeWork_Query(string id)
     {
         //var id = string.Empty;
@@ -357,5 +367,182 @@ public class PmisHelper(IConfiguration configuration, ILogger<ZentaoHelper> logg
             .Result;
         var projectJson = JObject.Parse(postRespone.Content.ReadAsStringAsync().Result);
         return projectJson;
+    }
+
+    /// <summary>
+    /// 查询周报列表
+    /// </summary>
+    /// <returns></returns>
+    public JObject QueryMyByWeek()
+    {
+        var pmisInfo = configuration.GetSection("PMISInfo").Get<PMISInfo>();
+        var httpHelper = new HttpRequestHelper();
+        var postResponse = httpHelper.PostAsync(pmisInfo.Url + "/unioa/job/weekWork/queryMy", new
+        {
+            index = 1,
+            size = 30,
+            conditions = new object[] { },
+            order = new object[] { },
+            data = new
+            {
+                status = (string?)null,
+                hasFile = (string?)null,
+                timeList = new[]
+                {
+                    DateTime.Now.AddMonths(-1).ToString("yyyy-MM-dd"),
+                    DateTime.Now.AddMonths(1).ToString("yyyy-MM-dd")
+                },
+                beginDate = DateTime.Now.AddMonths(-1).ToString("yyyy-MM-dd"),
+                endDate = DateTime.Now.AddMonths(1).ToString("yyyy-MM-dd")
+            }
+        }, new Dictionary<string, string> { { "authorization", tokenService.GetTokenAsync() } }).Result;
+        var json = JObject.Parse(postResponse.Content.ReadAsStringAsync().Result);
+        return json;
+    }
+
+    /// <summary>
+    /// 根据日期及用户ID获取每周工作计划明细
+    /// </summary>
+    /// <param name="weekDayInfo"></param>
+    /// <returns></returns>
+    public JObject QueryWorkDetailByWeek(WeekDayInfo weekDayInfo)
+    {
+        var pmisInfo = configuration.GetSection("PMISInfo").Get<PMISInfo>();
+        var httpHelper = new HttpRequestHelper();
+        var getResponse = httpHelper.PostAsync(pmisInfo.Url + $"/unioa/job/userWork/queryMyCommit", new
+            {
+                index = 1,
+                size = 30,
+                conditions = new object[] { },
+                order = new object[] { },
+                data = new
+                {
+                    beginDate = weekDayInfo.StartOfWeek,
+                    endDate = weekDayInfo.EndOfWeek,
+                    userId = pmisInfo.UserId
+                }
+            },
+            new Dictionary<string, string> { { "authorization", tokenService.GetTokenAsync() } }).Result;
+        var json = JObject.Parse(getResponse.Content.ReadAsStringAsync().Result);
+        return json;
+    }
+
+    /// <summary>
+    /// 根据日期及用户ID获取周报提交参数
+    /// </summary>
+    /// <param name="weekDayInfo"></param>
+    /// <returns></returns>
+    public JObject QueryWorkByWeek(WeekDayInfo weekDayInfo)
+    {
+        var pmisInfo = configuration.GetSection("PMISInfo").Get<PMISInfo>();
+        var httpHelper = new HttpRequestHelper();
+        var getResponse = httpHelper.GetAsync(pmisInfo.Url + $"/unioa/job/weekWork/getByDateAndUserId?fillDate={weekDayInfo.StartOfWeek}&userId={pmisInfo.UserId}",
+            new Dictionary<string, string> { { "authorization", tokenService.GetTokenAsync() } }).Result;
+        var json = JObject.Parse(getResponse.Content.ReadAsStringAsync().Result);
+        return json;
+    }
+
+    /// <summary>
+    /// 提交工作周报
+    /// </summary>
+    /// <param name="weekDayInfo"></param>
+    /// <returns></returns>
+    public string CommitWorkLogByWeek(WeekDayInfo weekDayInfo)
+    {
+        var finishCount = 0;
+        var httpHelper = new HttpRequestHelper();
+        var pmisInfo = configuration.GetSection("PMISInfo").Get<PMISInfo>();
+        IDbConnection dbConnection = new NpgsqlConnection(configuration["Connection"]);
+        var repeat = false;
+        //判断是否已提交过周报
+        var weekList = QueryMyByWeek();
+        if (bool.Parse(weekList["Success"]?.ToString()!))
+            if (weekList["Response"]!["rows"] is JArray dataArray)
+                foreach (var jToken in dataArray)
+                {
+                    var item = (JObject)jToken;
+                    if (item["fillWeek"]!.ToString() == DateTime.Now.Year + "-" + weekDayInfo.WeekNumber)
+                    {
+                        repeat = true;
+                        break;
+                    }
+                }
+
+        if (!repeat)
+        {
+            //组装本周工作内容
+            var workContent = string.Empty;
+            var workDetail = QueryWorkDetailByWeek(weekDayInfo);
+            if (bool.Parse(workDetail["Success"]?.ToString()!))
+                if (workDetail["Response"]!["rows"] is JArray dataArray)
+                {
+                    finishCount = dataArray.Count;
+                    var ztTaskIds = dataArray
+                        .Select(item => item["ztTaskId"]?.ToString())
+                        .Where(idStr => int.TryParse(idStr, out _)) // 过滤无效值
+                        .Select(idStr => int.Parse(idStr!)) // 安全解析为 int
+                        .Distinct()
+                        .ToArray();
+                    var zenTaoList = dbConnection.Query(@"select id,executionname from public.zentaotask WHERE ID = ANY(:id)", new { id = ztTaskIds })
+                        .ToDictionary(row => (string)row.id.ToString(), row => (string?)row.executionname ?? "");
+                    foreach (var workItem in dataArray)
+                        if (zenTaoList.ContainsKey(workItem["ztTaskId"].ToString()))
+                            workContent += zenTaoList[workItem["ztTaskId"].ToString()] + "工作内容：" + workItem["taskName"] + "," + workItem["description"] + ";";
+                        else
+                            workContent += workItem["taskName"] + "," + workItem["description"] + ";";
+                }
+
+            if (!string.IsNullOrEmpty(workContent))
+            {
+                //deepseek润色工作总结
+                var chatOptions = new ChatOptions { Tools = [] };
+                var chatHistory = new List<ChatMessage>
+                {
+                    new(ChatRole.System, pmisInfo.WeekPrompt),
+                    new(ChatRole.User, workContent)
+                };
+                var deepSeekRes = chatClient.GetResponseAsync(chatHistory, chatOptions).Result;
+                var deepSeekContent = deepSeekRes.Text;
+                if (!string.IsNullOrEmpty(deepSeekContent))
+                {
+                    var workByWeek = QueryWorkByWeek(weekDayInfo);
+                    if (bool.Parse(workByWeek["Success"]?.ToString()!))
+                    {
+                        var workWeekBody = workByWeek["Response"];
+                        workWeekBody["status"] = 1;
+                        workWeekBody["workSummary"] = deepSeekContent;
+                        workWeekBody["recipientId"] = "6332da1056a7b316e0574816";
+                        workWeekBody["recipientName"] = "陈云";
+                        workWeekBody["details"] = new JArray(new string[] { });
+                        var postRespone = httpHelper.PostAsyncStringBody(pmisInfo?.Url + "/unioa/job/weekWork/insertDailyCommunication", workWeekBody.ToString(Formatting.None),
+                                new Dictionary<string, string> { { "authorization", tokenService.GetTokenAsync() } })
+                            .Result;
+                        var result = JsonSerializer.Deserialize<PMISInsertResponse>(postRespone.Content.ReadAsStringAsync().Result);
+                        if (result.Success) pushMessageHelper.Push("周报", $"第{weekDayInfo.WeekNumber}周周报已发送\n本周完成" + finishCount + " 条任务", PushMessageHelper.PushIcon.Note);
+                        return workWeekBody.ToString(Formatting.None);
+                    }
+                }
+            }
+        }
+
+        return "";
+    }
+
+    /// <summary>
+    /// 获取当前是第几周，以及周一和周日的日期
+    /// </summary>
+    /// <returns></returns>
+    public WeekDayInfo GetWeekDayInfo()
+    {
+        var currentDate = DateTime.Now;
+        var ci = new CultureInfo("zh-CN"); // 使用中国文化，可以根据需求修改
+        var weekNumber = ci.Calendar.GetWeekOfYear(currentDate, CalendarWeekRule.FirstDay, DayOfWeek.Monday);
+        var startOfWeek = currentDate.AddDays(-(int)currentDate.DayOfWeek + (int)DayOfWeek.Monday);
+        var endOfWeek = startOfWeek.AddDays(6);
+        var info = new WeekDayInfo();
+        info.WeekNumber = weekNumber;
+        info.StartOfWeek = startOfWeek.ToString("yyyy-MM-dd");
+        info.EndOfWeek = endOfWeek.ToString("yyyy-MM-dd");
+        return info;
     }
 }

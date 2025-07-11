@@ -1,4 +1,5 @@
 ﻿using System.Data;
+using System.Globalization;
 using Dapper;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.AI;
@@ -205,5 +206,23 @@ public class PmisAndZentaoController(
         var processId = pmisHelper.OvertimeWork_CreateOrder(projectInfo, insertId, zentaoInfo?.id.ToString(), json);
         if (!string.IsNullOrEmpty(processId)) pmisHelper.OvertimeWork_Update(projectInfo, insertId, zentaoInfo?.id.ToString(), processId, json);
         return json;
+    }
+
+    [Tags("PMIS")]
+    [EndpointSummary("获取本周是第几周以及周一到周日的日期")]
+    [HttpGet]
+    public string GetWeekDayInfo()
+    {
+        var weekInfo = pmisHelper.GetWeekDayInfo();
+        return $"当前日期是本年的第 {weekInfo.WeekNumber} 周;周一：" + weekInfo.StartOfWeek + ";周日:" + weekInfo.EndOfWeek;
+    }
+
+    [Tags("PMIS")]
+    [EndpointSummary("周报上报")]
+    [HttpGet]
+    public string GetWeekWork()
+    {
+        var result = pmisHelper.CommitWorkLogByWeek(pmisHelper.GetWeekDayInfo());
+        return result;
     }
 }
