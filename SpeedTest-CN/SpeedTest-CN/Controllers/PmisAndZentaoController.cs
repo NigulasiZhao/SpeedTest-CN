@@ -1,4 +1,8 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using System.Data;
+using Dapper;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.AI;
+using Npgsql;
 using SpeedTest_CN.Common;
 using SpeedTest_CN.Models.PmisAndZentao;
 
@@ -12,7 +16,8 @@ public class PmisAndZentaoController(
     ZentaoHelper zentaoHelper,
     AttendanceHelper attendanceHelper,
     PmisHelper pmisHelper,
-    PushMessageHelper pushMessageHelper)
+    PushMessageHelper pushMessageHelper,
+    IChatClient chatClient)
     : Controller
 {
     private readonly IConfiguration _configuration = configuration;
@@ -60,6 +65,15 @@ public class PmisAndZentaoController(
         return result;
     }
 
+    [Tags("禅道")]
+    [EndpointSummary("根据项目ID获取项目编码")]
+    [HttpGet]
+    public string GetProjectCodeForProjectId(string projectId)
+    {
+        var result = zentaoHelper.GetProjectCodeForProjectId(projectId);
+        return result;
+    }
+
     [Tags("PMIS")]
     [EndpointSummary("根据日期计算工时")]
     [HttpGet]
@@ -72,19 +86,20 @@ public class PmisAndZentaoController(
     [Tags("PMIS")]
     [EndpointSummary("获取已上报列表")]
     [HttpGet]
-    public QueryMyByDateOutput QueryMyByDate()
+    public string QueryMyByDate()
     {
-        return pmisHelper.QueryMyByDate();
+        var json = pmisHelper.QueryMyByDate();
+        return json.ToString(Newtonsoft.Json.Formatting.None);
     }
 
     [Tags("PMIS")]
     [EndpointSummary("获取工作明细")]
     [HttpGet]
-    public GetByDateAndUserIdResponse QueryByDateAndUserId(string fillDate = "2025-06-27")
+    public string QueryByDateAndUserId(string fillDate = "2025-06-27")
     {
         var pmisInfo = configuration.GetSection("PMISInfo").Get<PMISInfo>();
         var result = pmisHelper.QueryWorkDetailByDate(fillDate, pmisInfo.UserId);
-        return result;
+        return result.ToString(Newtonsoft.Json.Formatting.None);
     }
 
     [Tags("PMIS")]
@@ -104,5 +119,91 @@ public class PmisAndZentaoController(
     {
         pushMessageHelper.Push("禅道", "pushMessage", PushMessageHelper.PushIcon.Zentao);
         return "";
+    }
+
+    [Tags("PMIS")]
+    [EndpointSummary("通过项目编码获取PMIS项目信息")]
+    [HttpGet]
+    public ProjectInfo GetProjectInfo(string projectCode)
+    {
+        var result = pmisHelper.GetProjectInfo(projectCode);
+        return result;
+    }
+
+
+    [Tags("DeepSeek")]
+    [EndpointSummary("生成加班理由")]
+    [HttpGet]
+    public string GeneratedOvertimeWorkContent(string Content)
+    {
+        var pmisInfo = configuration.GetSection("PMISInfo").Get<PMISInfo>();
+        var chatOptions = new ChatOptions
+        {
+            Tools =
+            [
+            ]
+        };
+        var chatHistory = new List<ChatMessage>
+        {
+            new(ChatRole.System, pmisInfo.DailyPrompt),
+            new(ChatRole.User, "加班内容：" + Content)
+        };
+        var res = chatClient.GetResponseAsync(chatHistory, chatOptions).Result;
+        var json = res.Text;
+        return json;
+    }
+
+    [Tags("PMIS")]
+    [EndpointSummary("提交加班申请")]
+    [HttpGet]
+    public string SubmitOvertime()
+    {
+        // var chatCompletionService = new OpenAIChatCompletionService("deepseek-chat", new Uri("https://api.deepseek.com"), "sk-5d767895fe1549babf3d8e51661be5e2");
+        // var history = new ChatHistory();
+        // history.Add(new ChatMessageContent(AuthorRole.System, "我是一个.NET工程师，现在需要进行加班申请，帮我根据我的加班内容生成加班事由，不要脱离加班内容进行扩写，要求描述简洁，字数控制在40至50字之间，直接输出生成内容，不要有任何表述。"));
+        // history.Add(new ChatMessageContent(AuthorRole.User, "加班内容：" + Content));
+        //
+        // var result = chatCompletionService.GetChatMessageContentAsync(
+        //     history).Result;
+        var pmisInfo = configuration.GetSection("PMISInfo").Get<PMISInfo>();
+
+        IDbConnection dbConnection = new NpgsqlConnection(configuration["Connection"]);
+        var zentaoInfo = dbConnection.Query<dynamic>($@"select
+                                                                            id,
+                                                                        	project,
+	                                                                        taskname ,
+	                                                                        taskdesc
+                                                                        from
+                                                                        	zentaotask z
+                                                                        where
+                                                                        	to_char(eststarted,
+                                                                        	'yyyy-MM-dd') = to_char(now(),
+                                                                        	'yyyy-MM-dd')
+                                                                        	and taskstatus = 'wait'
+                                                                        order by
+                                                                        	timeleft desc").FirstOrDefault();
+        var chatOptions = new ChatOptions
+        {
+            Tools =
+            [
+            ]
+        };
+        var chatHistory = new List<ChatMessage>
+        {
+            new(ChatRole.System, pmisInfo.DailyPrompt),
+            new(ChatRole.User, "加班内容：" + zentaoInfo.taskname + ":" + zentaoInfo.taskdesc)
+        };
+        var res = chatClient.GetResponseAsync(chatHistory, chatOptions).Result;
+        var json = res.Text;
+        if (zentaoInfo?.project == null || zentaoInfo?.id == null) return "";
+        var projectCode = zentaoHelper.GetProjectCodeForProjectId(zentaoInfo?.project.ToString());
+        if (string.IsNullOrEmpty(projectCode)) return "";
+        var projectInfo = pmisHelper.GetProjectInfo(projectCode);
+        if (string.IsNullOrEmpty(projectInfo.contract_id) || string.IsNullOrEmpty(projectInfo.contract_unit) || string.IsNullOrEmpty(projectInfo.project_name)) return "";
+        var insertId = pmisHelper.OvertimeWork_Insert(projectInfo, zentaoInfo?.id.ToString(), json);
+        if (string.IsNullOrEmpty(insertId)) return "";
+        var processId = pmisHelper.OvertimeWork_CreateOrder(projectInfo, insertId, zentaoInfo?.id.ToString(), json);
+        if (!string.IsNullOrEmpty(processId)) pmisHelper.OvertimeWork_Update(projectInfo, insertId, zentaoInfo?.id.ToString(), processId, json);
+        return json;
     }
 }

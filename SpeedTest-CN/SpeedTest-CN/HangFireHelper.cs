@@ -1,21 +1,27 @@
 ﻿using Dapper;
-using Hangfire;
 using Newtonsoft.Json;
 using Npgsql;
-using SpeedTest_CN.Models;
 using SpeedTest_CN.Models.Attendance;
 using SpeedTest_CN.Models.EventInfo;
 using System.Data;
-using System.Globalization;
-using System.Net.Http.Headers;
 using System.Text;
+using Hangfire;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Caching.Memory;
+using Newtonsoft.Json.Linq;
 using SpeedTest_CN.Common;
 using SpeedTest_CN.Models.PmisAndZentao;
 
 namespace SpeedTest_CN;
 
-public class HangFireHelper(IConfiguration configuration, PushMessageHelper pushMessageHelper, AttendanceHelper attendanceHelper, PmisHelper pmisHelper, ZentaoHelper zentaoHelper)
+public class HangFireHelper(
+    IConfiguration configuration,
+    PushMessageHelper pushMessageHelper,
+    AttendanceHelper attendanceHelper,
+    PmisHelper pmisHelper,
+    ZentaoHelper zentaoHelper,
+    TokenService tokenService,
+    IChatClient chatClient)
 {
     public void StartHangFireTask()
     {
@@ -23,11 +29,13 @@ public class HangFireHelper(IConfiguration configuration, PushMessageHelper push
         //每小时0 0 * * * ?
         //每五分钟0 0/5 * * * ?
         //RecurringJob.AddOrUpdate("SpeedTest", () => SpeedTest(), "0 0 */1 * * ?", new RecurringJobOptions { TimeZone = TimeZoneInfo.Local });
+        // RecurringJob.AddOrUpdate("SynchronizationZentaoTask", () => SynchronizationZentaoTask(), "0 0 * * * ?", new RecurringJobOptions { TimeZone = TimeZoneInfo.Local });
+        // RecurringJob.AddOrUpdate("FinishZentaoTask", () => FinishZentaoTask(), "0 0/10 * * * ?", new RecurringJobOptions { TimeZone = TimeZoneInfo.Local });
+
         RecurringJob.AddOrUpdate("AttendanceRecord", () => AttendanceRecord(), "0 0/10 * * * ?", new RecurringJobOptions { TimeZone = TimeZoneInfo.Local });
         RecurringJob.AddOrUpdate("KeepRecord", () => KeepRecord(), "0 0 */3 * * ?", new RecurringJobOptions { TimeZone = TimeZoneInfo.Local });
         RecurringJob.AddOrUpdate("CheckInWarning", () => CheckInWarning(), "0 0/10 * * * ?", new RecurringJobOptions { TimeZone = TimeZoneInfo.Local });
-        RecurringJob.AddOrUpdate("SynchronizationZentaoTask", () => SynchronizationZentaoTask(), "0 0 * * * ?", new RecurringJobOptions { TimeZone = TimeZoneInfo.Local });
-        RecurringJob.AddOrUpdate("FinishZentaoTask", () => FinishZentaoTask(), "0 0/10 * * * ?", new RecurringJobOptions { TimeZone = TimeZoneInfo.Local });
+        RecurringJob.AddOrUpdate("CommitOvertimeWork", () => CommitOvertimeWork(), "0 0/10 * * * ?", new RecurringJobOptions { TimeZone = TimeZoneInfo.Local });
     }
 
     private static readonly MemoryCache Cache = new(new MemoryCacheOptions());
@@ -76,7 +84,7 @@ public class HangFireHelper(IConfiguration configuration, PushMessageHelper push
         var insertIdent = false;
         IDbConnection dbConnection = new NpgsqlConnection(configuration["Connection"]);
         var client = new HttpClient();
-        client.DefaultRequestHeaders.Add("Authorization", configuration["yinuotoken"]);
+        client.DefaultRequestHeaders.Add("Authorization", tokenService.GetTokenAsync());
         var startDate = DateTime.Now;
         var response = client.GetAsync("http://122.225.71.14:10001/hd-oa/api/oaUserClockInRecord/clockInDataMonth?yearMonth=" + startDate.ToString("yyyy-MM")).Result;
         var result = response.Content.ReadAsStringAsync().Result;
@@ -110,10 +118,9 @@ public class HangFireHelper(IConfiguration configuration, PushMessageHelper push
                 foreach (var item in resultModel.Data.DayVoList)
                 {
                     var flagedate = DateTime.Parse(startDate.ToString("yyyy-MM") + "-" + item.Day);
-                    if (item.WorkHours == null) continue;
                     dbConnection.Execute($"""
-                                          INSERT INTO public.attendancerecordday(untilthisday,day,checkinrule,isnormal,isabnormal,isapply,clockinnumber,workhours,attendancedate)
-                                                                                                  VALUES({item.UntilThisDay},{item.Day},'{item.CheckInRule}','{item.IsNormal}','{item.IsAbnormal}','{item.IsApply}',{item.ClockInNumber},{item.WorkHours},to_timestamp('{flagedate:yyyy-MM-dd 00:00:00}', 'yyyy-mm-dd hh24:mi:ss'));
+                                          INSERT INTO public.attendancerecordday(untilthisday,day,checkinrule,isnormal,isabnormal,isapply,clockinnumber,workhours,attendancedate,yearmonth)
+                                                                                                  VALUES({item.UntilThisDay},{item.Day},'{item.CheckInRule}','{item.IsNormal}','{item.IsAbnormal}','{item.IsApply}',{item.ClockInNumber},{(item.WorkHours == null ? 0 : item.WorkHours)},to_timestamp('{flagedate:yyyy-MM-dd 00:00:00}', 'yyyy-mm-dd hh24:mi:ss'),'{startDate:yyyy-MM}');
                                           """);
                     if (item.DetailList != null)
                         foreach (var daydetail in item.DetailList)
@@ -380,8 +387,82 @@ public class HangFireHelper(IConfiguration configuration, PushMessageHelper push
         {
             var reportList = pmisHelper.QueryMyByDate();
             //确定未上报
-            var record = reportList.Response.rows.FirstOrDefault(e => e.fillDate == DateTime.Now.ToString("yyyy-MM-dd"));
-            if (record == null) pmisHelper.CommitWorkLogByDate(DateTime.Now.ToString("yyyy-MM-dd"), pmisInfo.UserId);
+            // var record = reportList.Response.rows.FirstOrDefault(e => e.fillDate == DateTime.Now.ToString("yyyy-MM-dd"));
+            // if (record == null) pmisHelper.CommitWorkLogByDate(DateTime.Now.ToString("yyyy-MM-dd"), pmisInfo.UserId);
+        }
+    }
+
+    /// <summary>
+    /// 自动提交加班申请
+    /// </summary>
+    public void CommitOvertimeWork()
+    {
+        var workStart = new TimeSpan(8, 30, 0); // 08:30
+        var workEnd = new TimeSpan(17, 30, 0); // 17:30
+        if (DateTime.Now.TimeOfDay < workStart || DateTime.Now.TimeOfDay > workEnd) return;
+        var pmisInfo = configuration.GetSection("PMISInfo").Get<PMISInfo>();
+        IDbConnection dbConnection = new NpgsqlConnection(configuration["Connection"]);
+        var hasOvertime = dbConnection.Query<int>($@"select count(0) from  public.overtimerecord where work_date = '{DateTime.Now:yyyy-MM-dd}'").FirstOrDefault();
+        if (hasOvertime != 0) return;
+        var zentaoInfo = dbConnection.Query<dynamic>($@"select
+                                                                            id,
+                                                                        	project,
+	                                                                        taskname ,
+	                                                                        taskdesc,
+	                                                                        projectcode
+                                                                        from
+                                                                        	zentaotask z
+                                                                        where
+                                                                        	to_char(eststarted,
+                                                                        	'yyyy-MM-dd') = to_char(now(),
+                                                                        	'yyyy-MM-dd')
+                                                                        	and taskstatus = 'wait'
+                                                                        order by
+                                                                        	timeleft desc").FirstOrDefault();
+        var chatOptions = new ChatOptions { Tools = [] };
+        var chatHistory = new List<ChatMessage>
+        {
+            new(ChatRole.System, pmisInfo.DailyPrompt),
+            new(ChatRole.User, "加班内容：" + zentaoInfo.taskname + ":" + zentaoInfo.taskdesc)
+        };
+        var res = chatClient.GetResponseAsync(chatHistory, chatOptions).Result;
+        var workContent = res.Text;
+        if (string.IsNullOrEmpty(workContent)) return;
+        if (zentaoInfo?.project == null || zentaoInfo?.id == null || string.IsNullOrEmpty(zentaoInfo?.projectcode)) return;
+        if (string.IsNullOrEmpty(zentaoInfo?.projectcode)) return;
+        var projectInfo = pmisHelper.GetProjectInfo(zentaoInfo?.projectcode);
+        if (string.IsNullOrEmpty(projectInfo.contract_id) || string.IsNullOrEmpty(projectInfo.contract_unit) || string.IsNullOrEmpty(projectInfo.project_name)) return;
+        var insertId = pmisHelper.OvertimeWork_Insert(projectInfo, zentaoInfo?.id.ToString(), workContent);
+        if (string.IsNullOrEmpty(insertId)) return;
+        var processId = pmisHelper.OvertimeWork_CreateOrder(projectInfo, insertId, zentaoInfo?.id.ToString(), workContent);
+        if (!string.IsNullOrEmpty(processId))
+        {
+            JObject updateResult = pmisHelper.OvertimeWork_Update(projectInfo, insertId, zentaoInfo?.id.ToString(), processId, workContent);
+            if (updateResult["Response"] != null)
+                dbConnection.Execute($@"
+                                      insert
+                                      	into
+                                      	public.overtimerecord
+                                      (id,
+                                      	plan_start_time,
+                                      	plan_end_time,
+                                      	plan_work_overtime_hour,
+                                      	contract_id,
+                                      	contract_unit,
+                                      	project_name,
+                                      	work_date,
+                                      	subject_matter,
+                                      	orderid)
+                                      values('{Guid.NewGuid().ToString()}',
+                                      '{updateResult["Response"]?["plan_start_time"]}',
+                                      '{updateResult["Response"]?["plan_end_time"]}',
+                                      {updateResult["Response"]?["plan_work_overtime_hour"]},
+                                      '{updateResult["Response"]?["contract_id"]}',
+                                      '{updateResult["Response"]?["contract_unit"]}',
+                                      '{updateResult["Response"]?["project_name"]}',
+                                      '{updateResult["Response"]?["work_date"]}',
+                                      '{updateResult["Response"]?["subject_matter"]}',
+                                      '{updateResult["Response"]?["id"]}');");
         }
     }
 }

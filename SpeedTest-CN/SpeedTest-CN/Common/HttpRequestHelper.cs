@@ -41,6 +41,21 @@ public class HttpRequestHelper
     }
 
     /// <summary>
+    /// 发送 POST 请求，支持 JSON Body
+    /// </summary>
+    public async Task<HttpResponseMessage> PostAsyncStringBody(string url, string? body, Dictionary<string, string>? headers = null, Dictionary<string, string>? queryParams = null)
+    {
+        var finalUrl = BuildUrl(url, queryParams);
+        var request = new HttpRequestMessage(HttpMethod.Post, finalUrl)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        };
+        AddHeaders(request, headers);
+
+        return await _httpClient.SendAsync(request);
+    }
+
+    /// <summary>
     /// 构建 URL 带 query 参数
     /// </summary>
     private static string BuildUrl(string baseUrl, Dictionary<string, string>? queryParams)

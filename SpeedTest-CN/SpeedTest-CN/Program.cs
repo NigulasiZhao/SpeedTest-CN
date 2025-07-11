@@ -1,8 +1,11 @@
+using System.ClientModel;
 using Hangfire;
 using Hangfire.PostgreSql;
 using Microsoft.AspNetCore.Localization;
 using SpeedTest_CN;
 using System.Globalization;
+using Microsoft.Extensions.AI;
+using OpenAI;
 using Scalar.AspNetCore;
 using Serilog;
 using SpeedTest_CN.Common;
@@ -28,10 +31,22 @@ builder.Services.AddCors(options =>
             .AllowAnyHeader(); // 允许任何请求头
     });
 });
+builder.Services.AddSingleton<IChatClient>(sp =>
+{
+    var cfg = sp.GetRequiredService<IConfiguration>();
+    var openAIClient = new OpenAIClient(
+        new ApiKeyCredential(cfg["LLM:ApiKey"]),
+        new OpenAIClientOptions { Endpoint = new Uri(cfg["LLM:EndPoint"]) }
+    );
+    return new ChatClientBuilder(openAIClient.GetChatClient(cfg["LLM:ModelId"]).AsIChatClient())
+        .UseFunctionInvocation()
+        .Build();
+});
 builder.Services.AddHangfire(config =>
     config.UsePostgreSqlStorage(c =>
         c.UseNpgsqlConnection(builder.Configuration["Connection"].ToString())));
 builder.Services.AddHangfireServer();
+builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton<HangFireHelper>();
 builder.Services.AddSingleton<DatabaseInitializer>();
 builder.Services.AddSingleton<ZentaoHelper>();
@@ -63,11 +78,11 @@ using (var scope = app.Services.CreateScope())
 
 app.UseCors("AllowAll");
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-    app.MapScalarApiReference();
-}
+// if (app.Environment.IsDevelopment())
+// {
+app.MapOpenApi();
+app.MapScalarApiReference();
+//}
 
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
 {

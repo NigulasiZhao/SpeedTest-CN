@@ -3,6 +3,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Unicode;
 using Dapper;
+using Newtonsoft.Json.Linq;
 using Npgsql;
 using SpeedTest_CN.Models.PmisAndZentao;
 
@@ -62,41 +63,46 @@ public class ZentaoHelper(IConfiguration configuration, ILogger<ZentaoHelper> lo
             var TaskList = GetZentaoTask();
             var sql = string.Empty;
             IDbConnection dbConnection = new NpgsqlConnection(configuration["Connection"]);
-            sql = TaskList.Aggregate(sql, (current, zentaoTaskItem) => current + $@"insert
-        	into
-        	public.zentaotask
-        (id,
-        	project,
-        	execution,
-        	taskname,
-        	estimate,
-        	timeleft,
-            eststarted,
-            consumed,
-            taskstatus,
-        	deadline,
-        	taskdesc,
-        	openedby,
-        	openeddate,
-        	qiwangriqi,
-        	executionname,
-        	projectname,registerhours)
-        values({zentaoTaskItem.id},
-        {zentaoTaskItem.project},
-        {zentaoTaskItem.execution},
-        '{zentaoTaskItem.name}',
-        {zentaoTaskItem.estimate},
-        {zentaoTaskItem.left},
-        '{zentaoTaskItem.estStarted}',
-         {zentaoTaskItem.consumed},
-               '{zentaoTaskItem.status}',
-        '{zentaoTaskItem.deadline}',
-        '{zentaoTaskItem.desc}',
-        '{zentaoTaskItem.openedBy}',
-        '{zentaoTaskItem.openedDate}',
-        '{zentaoTaskItem.qiwangriqi}',
-        '{zentaoTaskItem.executionName}',
-        '{zentaoTaskItem.projectName}',0) ON CONFLICT (id) DO NOTHING;");
+            foreach (var zentaoTaskItem in TaskList)
+            {
+                var projectCode = GetProjectCodeForProjectId(zentaoTaskItem.project.ToString());
+                sql += $@"insert
+                            	into
+                            	public.zentaotask
+                            (id,
+                            	project,
+                            	execution,
+                            	taskname,
+                            	estimate,
+                            	timeleft,
+                                eststarted,
+                                consumed,
+                                taskstatus,
+                            	deadline,
+                            	taskdesc,
+                            	openedby,
+                            	openeddate,
+                            	qiwangriqi,
+                            	executionname,
+                            	projectname,registerhours,projectcode)
+                            values({zentaoTaskItem.id},
+                            {zentaoTaskItem.project},
+                            {zentaoTaskItem.execution},
+                            '{zentaoTaskItem.name}',
+                            {zentaoTaskItem.estimate},
+                            {zentaoTaskItem.left},
+                            '{zentaoTaskItem.estStarted}',
+                             {zentaoTaskItem.consumed},
+                                   '{zentaoTaskItem.status}',
+                            '{zentaoTaskItem.deadline}',
+                            '{zentaoTaskItem.desc}',
+                            '{zentaoTaskItem.openedBy}',
+                            '{zentaoTaskItem.openedDate}',
+                            '{zentaoTaskItem.qiwangriqi}',
+                            '{zentaoTaskItem.executionName}',
+                            '{zentaoTaskItem.projectName}',0,'{projectCode}') ON CONFLICT (id) DO NOTHING;";
+            }
+
             dbConnection.Execute(sql);
             return true;
         }
@@ -146,6 +152,29 @@ public class ZentaoHelper(IConfiguration configuration, ILogger<ZentaoHelper> lo
             pushMessage = "禅道完成任务异常:" + e.Message;
             pushMessageHelper.Push("禅道", pushMessage, PushMessageHelper.PushIcon.Zentao);
             logger.LogError("禅道完成任务异常:" + e.Message);
+        }
+    }
+
+    /// <summary>
+    /// 获取项目编码
+    /// </summary>
+    /// <param name="projectId"></param>
+    /// <returns></returns>
+    public string GetProjectCodeForProjectId(string projectId)
+    {
+        try
+        {
+            var zentaoInfo = configuration.GetSection("ZentaoInfo").Get<ZentaoInfo>();
+            var zentaoToken = GetZentaoToken();
+            var httpHelper = new HttpRequestHelper();
+            var getResponse = httpHelper.GetAsync(zentaoInfo.Url + "/api.php/v1/projects/" + projectId, new Dictionary<string, string> { { "Token", zentaoToken } }).Result;
+            var json = JObject.Parse(getResponse.Content.ReadAsStringAsync().Result);
+            return json["code"].ToString();
+        }
+        catch (Exception e)
+        {
+            logger.LogError("获取项目编码异常:" + e.Message);
+            return "";
         }
     }
 

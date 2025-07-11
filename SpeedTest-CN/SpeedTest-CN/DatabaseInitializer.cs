@@ -7,16 +7,19 @@ using System.Data.Common;
 using Npgsql;
 using LibGit2Sharp;
 using System.IO;
+using SpeedTest_CN.Common;
 
 namespace SpeedTest_CN;
 
 public class DatabaseInitializer
 {
     private readonly IConfiguration _Configuration;
+    private readonly TokenService _tokenService;
 
-    public DatabaseInitializer(IConfiguration configuration)
+    public DatabaseInitializer(IConfiguration configuration, TokenService tokenService)
     {
         _Configuration = configuration;
+        _tokenService = tokenService;
     }
 
     public void Initialize()
@@ -153,11 +156,49 @@ public class DatabaseInitializer
             _dbConnection.Execute(createTableSql);
         }
 
+        if (TableExists("overtimerecord", _dbConnection))
+        {
+            var createTableSql = @"
+                                   CREATE TABLE public.overtimerecord (
+																		id varchar(50) NOT NULL,
+																		plan_start_time timestamp NULL,
+																		plan_end_time timestamp NULL,
+																		plan_work_overtime_hour float8 NULL,
+																		contract_id varchar(200) NULL,
+																		contract_unit varchar(200) NULL,
+																		project_name varchar(200) NULL,
+																		work_date varchar(50) NULL,
+																		subject_matter varchar(500) NULL,
+																		real_start_time timestamp NULL,
+																		real_end_time timestamp NULL,
+																		real_work_overtime_hour float8 NULL,
+																		orderid varchar(100) NULL,
+																		CONSTRAINT overtimerecord_unique UNIQUE (id)
+																	);
+																	
+																	-- Column comments
+																	
+																	COMMENT ON COLUMN public.overtimerecord.plan_start_time IS '计划加班开始时间';
+																	COMMENT ON COLUMN public.overtimerecord.plan_end_time IS '计划加班结束时间';
+																	COMMENT ON COLUMN public.overtimerecord.plan_work_overtime_hour IS '计划加班时长';
+																	COMMENT ON COLUMN public.overtimerecord.contract_id IS '项目id';
+																	COMMENT ON COLUMN public.overtimerecord.contract_unit IS '项目单位';
+																	COMMENT ON COLUMN public.overtimerecord.project_name IS '项目名称';
+																	COMMENT ON COLUMN public.overtimerecord.work_date IS '加班日期';
+																	COMMENT ON COLUMN public.overtimerecord.subject_matter IS '加班事由';
+																	COMMENT ON COLUMN public.overtimerecord.real_start_time IS '实际加班开始时间';
+																	COMMENT ON COLUMN public.overtimerecord.real_end_time IS '实际加班结束时间';
+																	COMMENT ON COLUMN public.overtimerecord.real_work_overtime_hour IS '实际加班时长';
+																	COMMENT ON COLUMN public.overtimerecord.orderid IS '工单ID';
+																	";
+            _dbConnection.Execute(createTableSql);
+        }
+
         if (_dbConnection.Query<int>("SELECT COUNT(0) FROM attendancerecord").First() == 0)
         {
             var infoResult = new AttendanceRecordResult();
             var client = new HttpClient();
-            client.DefaultRequestHeaders.Add("Authorization", _Configuration["yinuotoken"]);
+            client.DefaultRequestHeaders.Add("Authorization", _tokenService.GetTokenAsync());
             var StartDate = DateTime.Parse("2023-07-01");
             while (StartDate < DateTime.Now)
             {
@@ -226,6 +267,28 @@ public class DatabaseInitializer
             }
         }
 
+        _dbConnection.Execute(@"do $$
+									BEGIN
+									IF (select count(*) from  information_schema.columns where table_name = 'attendancerecordday' and table_schema = 'public' and column_name = 'yearmonth' ) = 0
+									THEN
+									   ALTER TABLE attendancerecordday ADD yearmonth varchar(200) NULL;
+									   COMMENT ON COLUMN attendancerecordday.yearmonth IS '年月';
+									END IF;
+									END;
+$$;
+--GO
+");
+        _dbConnection.Execute(@"do $$
+									BEGIN
+									IF (select count(*) from  information_schema.columns where table_name = 'zentaotask' and table_schema = 'public' and column_name = 'projectcode' ) = 0
+									THEN
+									   ALTER TABLE zentaotask ADD projectcode varchar(200) NULL;
+									   COMMENT ON COLUMN zentaotask.projectcode IS '项目编码';
+									END IF;
+									END;
+$$;
+--GO
+");
         _dbConnection.Dispose();
     }
 
